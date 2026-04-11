@@ -498,6 +498,10 @@ export function OmniVoiceLauncher() {
     };
   }, [clearSilenceTimer]);
 
+  const statusLabel = isRunning ? "Executing" : isListening ? "Listening" : "Idle";
+  const transcriptChars = commandDraft.trim().length;
+  const responseChars = assistantResponse.trim().length;
+
   return (
     <>
       <motion.button
@@ -554,6 +558,28 @@ export function OmniVoiceLauncher() {
           >
             <div className="absolute inset-0 [background:radial-gradient(circle_at_14%_10%,rgba(251,191,36,0.24),transparent_42%),radial-gradient(circle_at_78%_15%,rgba(45,212,191,0.22),transparent_38%),radial-gradient(circle_at_68%_84%,rgba(56,189,248,0.16),transparent_42%)]" />
             <div className="absolute inset-0 opacity-20 [background-image:linear-gradient(rgba(250,204,21,0.16)_1px,transparent_1px),linear-gradient(90deg,rgba(45,212,191,0.16)_1px,transparent_1px)] [background-size:48px_48px]" />
+            <div className="pointer-events-none absolute inset-0">
+              {Array.from({ length: 14 }).map((_, index) => (
+                <motion.span
+                  key={`spark-${index}`}
+                  className="absolute h-1.5 w-1.5 rounded-full bg-amber-200/80"
+                  style={{
+                    left: `${8 + (index * 6.5) % 88}%`,
+                    top: `${10 + (index * 11) % 76}%`
+                  }}
+                  animate={{
+                    y: [0, -16 - (index % 4) * 6, 0],
+                    opacity: [0.14, 0.9, 0.14],
+                    scale: [0.6, 1.1, 0.6]
+                  }}
+                  transition={{
+                    duration: 2.2 + (index % 3) * 0.55,
+                    delay: index * 0.09,
+                    repeat: Number.POSITIVE_INFINITY
+                  }}
+                />
+              ))}
+            </div>
 
             <div className="relative z-10 mx-auto flex h-full w-full max-w-[1440px] flex-col px-4 py-4 sm:px-6 sm:py-6">
               <header className="flex flex-wrap items-center justify-between gap-3 rounded-3xl border border-amber-100/20 bg-slate-900/65 px-4 py-3 backdrop-blur-xl">
@@ -567,7 +593,13 @@ export function OmniVoiceLauncher() {
 
                 <div className="flex items-center gap-2">
                   <span className="rounded-full border border-amber-200/30 bg-amber-200/10 px-3 py-1 text-[11px] uppercase tracking-[0.12em] text-amber-100">
-                    {isRunning ? "Executing" : isListening ? "Listening" : "Idle"}
+                    {statusLabel}
+                  </span>
+                  <span className="rounded-full border border-teal-200/25 bg-teal-500/10 px-3 py-1 text-[10px] uppercase tracking-[0.11em] text-teal-100/90">
+                    Steps {steps.length}
+                  </span>
+                  <span className="rounded-full border border-sky-200/25 bg-sky-500/10 px-3 py-1 text-[10px] uppercase tracking-[0.11em] text-sky-100/90">
+                    TX {transcriptChars} / RX {responseChars}
                   </span>
                   <button
                     onClick={closeArena}

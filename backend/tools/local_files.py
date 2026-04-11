@@ -9,6 +9,7 @@ import sys
 import webbrowser
 from pathlib import Path
 from typing import Any
+from urllib.parse import quote_plus
 
 
 MEDIA_EXTENSIONS = {
@@ -93,23 +94,50 @@ VLC_WINDOWS_PATHS = (
 APP_KEYWORDS: dict[str, tuple[str, ...]] = {
     "whatsapp": ("whatsapp", "whats app"),
     "chrome": ("chrome", "google chrome"),
+    "edge": ("edge", "microsoft edge", "ms edge", "msedge"),
+    "firefox": ("firefox", "mozilla firefox", "mozilla"),
+    "brave": ("brave", "brave browser"),
+    "opera": ("opera", "opera browser"),
     "notepad": ("notepad",),
     "calculator": ("calculator", "calc"),
     "vlc": ("vlc",),
     "discord": ("discord",),
     "spotify": ("spotify",),
     "telegram": ("telegram",),
+    "vscode": ("vscode", "visual studio code", "code"),
+    "word": ("word", "microsoft word"),
+    "excel": ("excel", "microsoft excel"),
+    "powerpoint": ("powerpoint", "microsoft powerpoint", "ppt"),
+    "teams": ("teams", "microsoft teams"),
+    "zoom": ("zoom",),
+    "explorer": ("file explorer", "explorer"),
+    "cmd": ("command prompt", "cmd"),
+    "powershell": ("powershell", "power shell"),
 }
 APP_EXECUTABLES: dict[str, tuple[str, ...]] = {
     "whatsapp": ("WhatsApp.exe", "whatsapp.exe"),
     "chrome": ("chrome.exe",),
+    "edge": ("msedge.exe",),
+    "firefox": ("firefox.exe",),
+    "brave": ("brave.exe", "brave-browser.exe"),
+    "opera": ("opera.exe",),
     "notepad": ("notepad.exe",),
     "calculator": ("calc.exe",),
     "vlc": ("vlc.exe",),
     "discord": ("Discord.exe", "discord.exe"),
     "spotify": ("Spotify.exe", "spotify.exe"),
     "telegram": ("Telegram.exe", "telegram.exe"),
+    "vscode": ("Code.exe", "code.exe"),
+    "word": ("WINWORD.EXE",),
+    "excel": ("EXCEL.EXE",),
+    "powerpoint": ("POWERPNT.EXE",),
+    "teams": ("ms-teams.exe", "Teams.exe"),
+    "zoom": ("Zoom.exe",),
+    "explorer": ("explorer.exe",),
+    "cmd": ("cmd.exe",),
+    "powershell": ("powershell.exe", "pwsh.exe"),
 }
+BROWSER_APPS = {"chrome", "edge", "firefox", "brave", "opera"}
 
 
 def _normalize_text(text: str) -> str:
@@ -400,12 +428,79 @@ def _detect_requested_app(prompt: str) -> str | None:
     generic_match = re.search(r"\b(?:open|launch|start)\s+([a-z0-9][a-z0-9 ._-]{1,42})", normalized)
     if generic_match:
         raw_candidate = generic_match.group(1)
-        candidate = re.split(r"\b(?:app|software|please|pls|and|then)\b", raw_candidate, maxsplit=1)[0]
+        candidate = re.split(r"\b(?:app|software|please|pls|and|then|search|for|in|on)\b", raw_candidate, maxsplit=1)[0]
         candidate = re.sub(r"\s+", " ", candidate).strip(" .")
-        if candidate and candidate not in {"my", "pc", "laptop", "computer", "local"}:
+        if candidate and candidate not in {
+            "my",
+            "pc",
+            "laptop",
+            "computer",
+            "local",
+            "a",
+            "an",
+            "the",
+            "file",
+            "folder",
+            "website",
+            "web",
+        }:
             return candidate
 
     return None
+
+
+def looks_like_local_app_request(prompt: str) -> bool:
+    return _detect_requested_app(prompt) is not None
+
+
+def _extract_search_query(prompt: str) -> str | None:
+    quoted = re.search(r"\bsearch(?:\s+for)?\s+['\"]([^'\"]+)['\"]", prompt, flags=re.IGNORECASE)
+    if quoted:
+        query = quoted.group(1).strip()
+        return query or None
+
+    plain = re.search(r"\bsearch(?:\s+for)?\s+(.+)$", prompt, flags=re.IGNORECASE)
+    if not plain:
+        return None
+
+    query = plain.group(1).strip(" .")
+    query = re.sub(
+        r"\b(?:on|in)\s+(?:microsoft\s+edge|edge|google\s+chrome|chrome|firefox|brave|opera)\b$",
+        "",
+        query,
+        flags=re.IGNORECASE,
+    ).strip(" .")
+    return query or None
+
+
+def _extract_url(prompt: str) -> str | None:
+    match = re.search(r"https?://\S+", prompt, flags=re.IGNORECASE)
+    if not match:
+        return None
+    return match.group(0).rstrip(".,)")
+
+
+def _open_browser_target(app_name: str, target_url: str) -> tuple[bool, str]:
+    executable = _resolve_executable(app_name)
+
+    if executable:
+        try:
+            subprocess.Popen([executable, target_url])
+            return True, f"Opened {app_name.title()} with {target_url}"
+        except Exception:
+            pass
+
+    if os.name == "nt":
+        try:
+            subprocess.Popen(["cmd", "/c", "start", "", app_name, target_url])
+            return True, f"Opened {app_name.title()} with {target_url}"
+        except Exception:
+            pass
+
+    opened = webbrowser.open(target_url, new=2)
+    if opened:
+        return True, f"Opened default browser with {target_url}"
+    return False, f"Could not open browser target: {target_url}"
 
 
 def _resolve_executable(app_name: str) -> str | None:
@@ -452,6 +547,22 @@ def _open_local_application_sync(prompt: str) -> tuple[bool, str, str | None]:
     if app_name == "whatsapp":
         ok, message = _open_whatsapp_fallback()
         return ok, message, app_name
+
+    if app_name in BROWSER_APPS:
+        query = _extract_search_query(prompt)
+        if query:
+            search_url = f"https://www.google.com/search?q={quote_plus(query)}"
+            ok, status = _open_browser_target(app_name, search_url)
+            if ok:
+                return True, f"Opened {app_name.title()} and searched for " + f'"{query}".', app_name
+            return False, status, app_name
+
+        direct_url = _extract_url(prompt)
+        if direct_url:
+            ok, status = _open_browser_target(app_name, direct_url)
+            if ok:
+                return True, f"Opened {app_name.title()} and navigated to {direct_url}.", app_name
+            return False, status, app_name
 
     executable = _resolve_executable(app_name)
     if not executable:

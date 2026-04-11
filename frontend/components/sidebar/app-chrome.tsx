@@ -9,7 +9,7 @@ import { Command, Github, Mail, NotepadText, Slack, Calendar } from "lucide-reac
 import { Sidebar } from "@/components/ui/modern-side-bar";
 import { BackgroundPaths } from "@/components/ui/background-paths";
 import { OmniCommandPalette, type OmniItem, type OmniSource } from "@/components/ui/omni-command-palette";
-import { OmniVoiceLauncher } from "@/components/voice/omni-voice-launcher";
+import { OmniVoiceLauncher } from "@/components/voice";
 import { createNewChatHref } from "@/lib/utils";
 
 export function AppChrome({ children }: { children: React.ReactNode }) {

@@ -10,6 +10,7 @@ from tools.gforms import search_google_forms
 from tools.local_files import (
     create_local_folder_from_prompt,
     find_best_local_file,
+    looks_like_local_app_request,
     open_local_application_from_prompt,
     open_local_file,
     search_local_files,
@@ -46,22 +47,7 @@ class DocsAgent:
 
     @staticmethod
     def _is_local_app_open_request(message: str) -> bool:
-        normalized = re.sub(r"\s+", " ", message.lower()).strip()
-        action_words = ["open", "launch", "start"]
-        app_words = [
-            "app",
-            "software",
-            "whatsapp",
-            "chrome",
-            "notepad",
-            "calculator",
-            "calc",
-            "vlc",
-            "discord",
-            "spotify",
-            "telegram",
-        ]
-        return any(word in normalized for word in action_words) and any(word in normalized for word in app_words)
+        return looks_like_local_app_request(message)
 
     async def run(self, user_message: str, *, preferred_model: str | None = None) -> AgentOutput:
         if self._is_create_folder_request(user_message):

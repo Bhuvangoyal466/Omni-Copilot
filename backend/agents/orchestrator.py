@@ -21,6 +21,7 @@ except Exception:
     pass
 
 from langgraph.graph import END, START, StateGraph
+from tools.local_files import looks_like_local_app_request
 
 from agents.browser_agent import BrowserAgent
 from agents.chat_agent import ChatAgent
@@ -447,22 +448,7 @@ def _is_local_open_intent(message: str) -> bool:
 
 
 def _is_local_app_open_intent(message: str) -> bool:
-    normalized = _normalize_message(message)
-    action_words = ["open", "launch", "start"]
-    app_words = [
-        "app",
-        "software",
-        "whatsapp",
-        "chrome",
-        "notepad",
-        "calculator",
-        "calc",
-        "vlc",
-        "discord",
-        "spotify",
-        "telegram",
-    ]
-    return any(word in normalized for word in action_words) and any(word in normalized for word in app_words)
+    return looks_like_local_app_request(message)
 
 
 def _is_local_folder_create_intent(message: str) -> bool:
