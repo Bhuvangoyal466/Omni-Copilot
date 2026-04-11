@@ -13,12 +13,13 @@ class BrowserAgent:
         ]
 
         result = await run_browser_task(user_message)
+        failed = result.lower().startswith("browser task failed") or "could not open" in result.lower()
 
         events.append(
             {
                 "agent": self.name,
-                "message": "Browser task simulated",
-                "status": "completed",
+                "message": "Browser task completed" if not failed else "Browser task failed",
+                "status": "failed" if failed else "completed",
             }
         )
 

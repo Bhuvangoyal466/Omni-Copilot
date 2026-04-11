@@ -138,6 +138,36 @@ APP_EXECUTABLES: dict[str, tuple[str, ...]] = {
     "powershell": ("powershell.exe", "pwsh.exe"),
 }
 BROWSER_APPS = {"chrome", "edge", "firefox", "brave", "opera"}
+BROWSER_WINDOWS_PATHS: dict[str, tuple[Path, ...]] = {
+    "edge": (
+        Path("C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe"),
+        Path("C:/Program Files/Microsoft/Edge/Application/msedge.exe"),
+    ),
+    "chrome": (
+        Path("C:/Program Files/Google/Chrome/Application/chrome.exe"),
+        Path("C:/Program Files (x86)/Google/Chrome/Application/chrome.exe"),
+    ),
+    "firefox": (Path("C:/Program Files/Mozilla Firefox/firefox.exe"),),
+    "brave": (
+        Path("C:/Program Files/BraveSoftware/Brave-Browser/Application/brave.exe"),
+        Path("C:/Program Files (x86)/BraveSoftware/Brave-Browser/Application/brave.exe"),
+    ),
+    "opera": (Path("C:/Users") / "HP" / "AppData/Local/Programs/Opera/launcher.exe",),
+}
+WEB_APP_URLS: dict[str, str] = {
+    "instagram": "https://www.instagram.com",
+    "youtube": "https://www.youtube.com",
+    "linkedin": "https://www.linkedin.com",
+    "facebook": "https://www.facebook.com",
+    "x": "https://x.com",
+    "twitter": "https://x.com",
+    "reddit": "https://www.reddit.com",
+    "github": "https://github.com",
+    "notion": "https://www.notion.so",
+    "slack": "https://slack.com/signin",
+    "discord": "https://discord.com/channels/@me",
+    "whatsapp": "https://web.whatsapp.com",
+}
 
 
 def _normalize_text(text: str) -> str:
@@ -480,7 +510,51 @@ def _extract_url(prompt: str) -> str | None:
     return match.group(0).rstrip(".,)")
 
 
+def _extract_requested_browser(prompt: str) -> str | None:
+    normalized = _normalize_text(prompt)
+    for app_name in BROWSER_APPS:
+        for keyword in APP_KEYWORDS.get(app_name, ()): 
+            if keyword in normalized:
+                return app_name
+    return None
+
+
+def _extract_web_target_url(prompt: str, fallback_target: str | None = None) -> str | None:
+    explicit_url = _extract_url(prompt)
+    if explicit_url:
+        return explicit_url
+
+    normalized = _normalize_text(prompt)
+    web_intent = any(phrase in normalized for phrase in ["on web", "website", "web site", "on browser", "in browser"])
+
+    target: str | None = None
+    match = re.search(r"\bopen\s+([a-z0-9][a-z0-9._-]{1,80})\s+(?:on\s+web|website|web\s+site|in\s+browser)\b", normalized)
+    if match:
+        target = match.group(1).strip(" .")
+    elif web_intent and fallback_target:
+        target = fallback_target.strip(" .")
+
+    if not target:
+        return None
+
+    target = target.lower()
+    if target in WEB_APP_URLS:
+        return WEB_APP_URLS[target]
+
+    if "." in target:
+        return f"https://{target}" if not target.startswith("http") else target
+
+    return f"https://www.{target}.com"
+
+
 def _open_browser_target(app_name: str, target_url: str) -> tuple[bool, str]:
+    if os.name == "nt" and app_name == "edge":
+        try:
+            os.startfile(f"microsoft-edge:{target_url}")  # type: ignore[attr-defined]
+            return True, f"Opened Edge with {target_url}"
+        except Exception:
+            pass
+
     executable = _resolve_executable(app_name)
 
     if executable:
@@ -492,8 +566,14 @@ def _open_browser_target(app_name: str, target_url: str) -> tuple[bool, str]:
 
     if os.name == "nt":
         try:
-            subprocess.Popen(["cmd", "/c", "start", "", app_name, target_url])
-            return True, f"Opened {app_name.title()} with {target_url}"
+            fallback = subprocess.run(
+                ["cmd", "/c", "start", "", target_url],
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+            if fallback.returncode == 0:
+                return True, f"Opened default browser with {target_url}"
         except Exception:
             pass
 
@@ -517,6 +597,10 @@ def _resolve_executable(app_name: str) -> str | None:
         found = shutil.which(candidate)
         if found:
             return found
+
+    for absolute_path in BROWSER_WINDOWS_PATHS.get(app_name, ()): 
+        if absolute_path.exists():
+            return str(absolute_path)
 
     return None
 
@@ -544,6 +628,20 @@ def _open_local_application_sync(prompt: str) -> tuple[bool, str, str | None]:
             None,
         )
 
+    web_target_url = _extract_web_target_url(prompt, fallback_target=app_name)
+    if web_target_url:
+        preferred_browser = _extract_requested_browser(prompt)
+        if preferred_browser:
+            ok, status = _open_browser_target(preferred_browser, web_target_url)
+            if ok:
+                return True, f"Opened {preferred_browser.title()} on {web_target_url}.", preferred_browser
+            return False, status, preferred_browser
+
+        opened = webbrowser.open(web_target_url, new=2)
+        if opened:
+            return True, f"Opened web target: {web_target_url}", app_name
+        return False, f"Could not open web target: {web_target_url}", app_name
+
     if app_name == "whatsapp":
         ok, message = _open_whatsapp_fallback()
         return ok, message, app_name
@@ -569,8 +667,14 @@ def _open_local_application_sync(prompt: str) -> tuple[bool, str, str | None]:
         if os.name == "nt":
             try:
                 # Let Windows resolve registered app aliases for broader app support.
-                subprocess.Popen(["cmd", "/c", "start", "", app_name])
-                return True, f"Tried launching {app_name.title()} using Windows app resolver.", app_name
+                fallback = subprocess.run(
+                    ["cmd", "/c", "start", "", app_name],
+                    capture_output=True,
+                    text=True,
+                    timeout=10,
+                )
+                if fallback.returncode == 0:
+                    return True, f"Opened {app_name.title()} using Windows app resolver.", app_name
             except Exception:
                 pass
 
