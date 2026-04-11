@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, Literal, TypedDict
+from typing import Any, Literal, NotRequired, TypedDict
 
 AgentStatusKind = Literal["running", "completed", "failed"]
 AgentRoute = Literal["chat", "docs", "comms", "calendar", "code", "browser", "memory"]
@@ -25,3 +25,5 @@ class GraphState(TypedDict):
     answer: str
     events: list[AgentEvent]
     tool_results: dict[str, Any]
+    user_id: NotRequired[str]
+    preferred_model: NotRequired[str]

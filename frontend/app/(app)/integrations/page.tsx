@@ -1,19 +1,26 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import { useSearchParams } from "next/navigation";
 
 import { ToolCard } from "@/components/tools/tool-card";
 import { ConnectionModal } from "@/components/tools/connection-modal";
 import { useTools } from "@/lib/hooks/use-tools";
 
 export default function IntegrationsPage() {
-  const { tools, toggleTool } = useTools();
+  const { tools, connectTool, disconnectTool } = useTools();
+  const searchParams = useSearchParams();
   const [selectedToolId, setSelectedToolId] = useState<string | null>(null);
+  const [isConnecting, setIsConnecting] = useState(false);
 
   const selectedTool = useMemo(
     () => tools.find((tool) => tool.id === selectedToolId) ?? null,
     [selectedToolId, tools]
   );
+
+  const oauthStatus = searchParams.get("status");
+  const oauthTool = searchParams.get("integration");
+  const oauthReason = searchParams.get("reason");
 
   return (
     <div className="space-y-5">
@@ -23,6 +30,13 @@ export default function IntegrationsPage() {
         <p className="text-sm text-muted-foreground dark:text-white/65">
           Authorize providers and let Omni orchestrate tasks across your workspace.
         </p>
+        {oauthStatus && (
+          <p className="mt-2 text-xs text-muted-foreground dark:text-white/60">
+            OAuth status: <span className="font-semibold text-foreground dark:text-white">{oauthStatus}</span>
+            {oauthTool ? ` (${oauthTool})` : ""}
+            {oauthReason ? ` - ${decodeURIComponent(oauthReason)}` : ""}
+          </p>
+        )}
       </div>
 
       <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
@@ -37,7 +51,7 @@ export default function IntegrationsPage() {
               }
 
               if (current.connected) {
-                toggleTool(toolId);
+                void disconnectTool(toolId);
               } else {
                 setSelectedToolId(toolId);
               }
@@ -55,8 +69,15 @@ export default function IntegrationsPage() {
             }
           }}
           toolLabel={selectedTool.label}
-          onConnected={() => {
-            toggleTool(selectedTool.id);
+          isLoading={isConnecting}
+          onConfirm={async () => {
+            setIsConnecting(true);
+            try {
+              await connectTool(selectedTool.id);
+              setSelectedToolId(null);
+            } finally {
+              setIsConnecting(false);
+            }
           }}
         />
       )}

@@ -46,6 +46,7 @@ function parseSseChunk(raw: string): SseEvent[] {
 
 export function useChat(chatId: string) {
   const messages = useAppStore((s) => s.messagesByChat[chatId] ?? []);
+  const selectedModel = useAppStore((s) => s.selectedModel);
   const addMessageText = useAppStore((s) => s.addMessageText);
   const updateMessageContent = useAppStore((s) => s.updateMessageContent);
   const pushAgentStep = useAppStore((s) => s.pushAgentStep);
@@ -77,12 +78,22 @@ export function useChat(chatId: string) {
           },
           body: JSON.stringify({
             chatId: targetChatId,
-            message
+            message,
+            model: selectedModel
           })
         });
 
         if (!response.ok || !response.body) {
-          throw new Error(`Stream failed with status ${response.status}`);
+          let messageText = `Stream failed with status ${response.status}`;
+          try {
+            const payload = (await response.json()) as { error?: string };
+            if (payload?.error) {
+              messageText = payload.error;
+            }
+          } catch {
+            // Keep the default status message when response body is not JSON.
+          }
+          throw new Error(messageText);
         }
 
         const reader = response.body.getReader();
@@ -141,7 +152,7 @@ export function useChat(chatId: string) {
         setIsStreaming(false);
       }
     },
-    [addMessageText, pushAgentStep, updateMessageContent]
+    [addMessageText, pushAgentStep, selectedModel, updateMessageContent]
   );
 
   return useMemo(

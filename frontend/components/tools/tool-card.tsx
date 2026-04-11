@@ -13,6 +13,9 @@ interface ToolCardProps {
 }
 
 export function ToolCard({ tool, onToggle }: ToolCardProps) {
+  const statusText = tool.status === "connecting" ? "connecting" : tool.status;
+  const isBusy = tool.status === "connecting";
+
   return (
     <GlowCard
       glowColor={tool.connected ? "green" : "blue"}
@@ -27,15 +30,23 @@ export function ToolCard({ tool, onToggle }: ToolCardProps) {
               variant={tool.connected ? "default" : "outline"}
               className={tool.connected ? "bg-emerald-400 text-black" : "text-foreground/80 dark:text-white/80"}
             >
-              {tool.status}
+              {statusText}
             </Badge>
           </div>
 
           <p className="text-sm text-muted-foreground dark:text-white/65">
             {tool.connected
               ? "Connected and available for orchestration"
-              : "Authorize this tool to let Omni perform actions"}
+              : tool.status === "pending"
+                ? "Authorization started. Finish OAuth to complete connection"
+                : "Authorize this tool to let Omni perform actions"}
           </p>
+
+          {tool.persona && (
+            <p className="text-xs text-muted-foreground/90 dark:text-white/55">Persona: {tool.persona}</p>
+          )}
+
+          {tool.error && <p className="text-xs text-rose-600 dark:text-rose-300">{tool.error}</p>}
 
           {tool.lastUsed && (
             <p className="inline-flex items-center gap-1 text-xs text-muted-foreground dark:text-white/50">
@@ -47,10 +58,13 @@ export function ToolCard({ tool, onToggle }: ToolCardProps) {
 
         <Button
           onClick={() => onToggle(tool.id)}
+          disabled={isBusy}
           variant={tool.connected ? "secondary" : "default"}
           className={tool.connected ? "bg-secondary/80 text-secondary-foreground hover:bg-secondary" : "bg-cyan-300 text-black hover:bg-cyan-200"}
         >
-          {tool.connected ? (
+          {isBusy ? (
+            <span className="inline-flex items-center gap-2">Connecting...</span>
+          ) : tool.connected ? (
             <span className="inline-flex items-center gap-2">
               <Link2Off className="h-4 w-4" />
               Disconnect

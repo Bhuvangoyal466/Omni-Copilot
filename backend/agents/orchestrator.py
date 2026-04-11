@@ -187,7 +187,19 @@ def _risk_level(route: AgentRoute, request: str) -> str:
     if any(keyword in normalized for keyword in IRREVERSIBLE_KEYWORDS):
         return "High"
 
+    if route == "comms" and _is_whatsapp_send_intent(request):
+        return "Medium"
+
+    if route == "comms" and _is_google_form_create_intent(request):
+        return "Low"
+
+    if route == "docs" and _is_local_folder_create_intent(request):
+        return "Medium"
+
     if route == "docs" and _is_local_open_intent(request):
+        return "Low"
+
+    if route == "docs" and _is_local_app_open_intent(request):
         return "Low"
 
     if route == "browser":
@@ -238,7 +250,47 @@ def _format_plan(goal: str, steps: list[str], tools: list[str], estimated: str, 
 
 
 def _build_pending_plan(request: str, route: AgentRoute) -> PendingPlan:
-    if route == "docs" and _is_local_open_intent(request):
+    if route == "docs" and _is_local_folder_create_intent(request):
+        steps = [
+            "[orchestrator] -> confirm local folder creation request",
+            "[docs_agent/local_files] -> resolve target disk and folder name",
+            "[docs_agent/local_files] -> create folder and return final path",
+        ]
+        tools = ["docs_agent", "create_local_folder_from_prompt"]
+        estimated = "~3 actions, ~6 seconds"
+    elif route == "comms" and _is_whatsapp_send_intent(request):
+        steps = [
+            "[orchestrator] -> validate WhatsApp contact and message payload",
+            "[comms_agent/whatsapp] -> launch installed WhatsApp desktop app (fallback: WhatsApp Web) and search target contact",
+            "[comms_agent/whatsapp] -> send message and return execution proof",
+        ]
+        tools = ["comms_agent", "send_whatsapp_message"]
+        estimated = "~3 actions, ~20 seconds"
+    elif route == "comms" and _is_google_form_create_intent(request):
+        steps = [
+            "[orchestrator] -> validate Google Form fields from prompt",
+            "[comms_agent/gforms] -> create form shell via Google Forms API",
+            "[comms_agent/gforms] -> add requested fields and return URLs",
+        ]
+        tools = ["comms_agent", "create_sample_google_form"]
+        estimated = "~3 actions, ~12 seconds"
+    elif route == "comms" and _is_email_send_intent(request):
+        steps = [
+            "[orchestrator] -> validate sender/recipient and intent",
+            "[comms_agent/gmail] -> compose requested email payload",
+            "[comms_agent/gmail] -> send via connected Gmail account and return confirmation",
+        ]
+        tools = ["comms_agent", "send_gmail_message"]
+        estimated = "~3 actions, ~8 seconds"
+    elif route == "docs" and _is_local_app_open_intent(request):
+        steps = [
+            "[orchestrator] -> confirm local app launch request",
+            "[docs_agent/local_files] -> resolve requested desktop application",
+            "[docs_agent/local_files] -> launch app and report status",
+        ]
+        tools = ["docs_agent", "open_local_application_from_prompt"]
+        estimated = "~3 actions, ~5 seconds"
+    elif route == "docs" and _is_local_open_intent(request):
         steps = [
             "[orchestrator] -> confirm local file open request",
             "[docs_agent/local_files] -> find best matching local media file",
@@ -262,11 +314,17 @@ def _build_pending_plan(request: str, route: AgentRoute) -> PendingPlan:
     )
 
 
-async def _execute_route(route: AgentRoute, message: str) -> AgentOutput:
+async def _execute_route(
+    route: AgentRoute,
+    message: str,
+    *,
+    user_id: str | None = None,
+    preferred_model: str | None = None,
+) -> AgentOutput:
     if route == "docs":
-        return await docs_agent.run(message)
+        return await docs_agent.run(message, preferred_model=preferred_model)
     if route == "comms":
-        return await comms_agent.run(message)
+        return await comms_agent.run(message, user_id=user_id)
     if route == "calendar":
         return await calendar_agent.run(message)
     if route == "code":
@@ -275,17 +333,69 @@ async def _execute_route(route: AgentRoute, message: str) -> AgentOutput:
         return await browser_agent.run(message)
     if route == "memory":
         return await memory_agent.run(message)
-    return await chat_agent.run(message)
+    return await chat_agent.run(message, preferred_model=preferred_model)
 
 
-async def _execute_pending_plan(plan: PendingPlan) -> tuple[bool, str, AgentOutput | None]:
+def _build_execution_summary(plan: PendingPlan, output: AgentOutput) -> str:
+    lines = [
+        "Execution summary:",
+        f"- Goal: {plan.request.strip() or 'N/A'}",
+        f"- Route executed: {plan.route}",
+        f"- Steps completed: {len(plan.steps)}",
+    ]
+
+    tool_results = output.get("tool_results", {})
+    if tool_results:
+        lines.append(f"- Tool groups: {', '.join(sorted(tool_results.keys()))}")
+        for key, value in tool_results.items():
+            if isinstance(value, list):
+                lines.append(f"- {key}: {len(value)} item(s)")
+            elif isinstance(value, dict):
+                ok_flag = value.get("ok")
+                if ok_flag is True:
+                    if key == "google_form":
+                        field_count = len(value.get("fields") or [])
+                        lines.append(f"- {key}: created successfully with {field_count} required field(s)")
+                    elif key == "whatsapp":
+                        action_count = len(value.get("actions") or [])
+                        lines.append(f"- {key}: sent successfully with {action_count} execution step(s)")
+                    elif key == "gmail_send":
+                        lines.append("- gmail_send: sent successfully")
+                    else:
+                        lines.append(f"- {key}: success")
+                elif ok_flag is False:
+                    error_text = str(value.get("error") or "failed")
+                    lines.append(f"- {key}: failed ({error_text[:120]})")
+                else:
+                    lines.append(f"- {key}: updated")
+            elif value is None:
+                lines.append(f"- {key}: none")
+            else:
+                lines.append(f"- {key}: updated")
+    else:
+        lines.append("- Tool groups: none")
+
+    return "\n".join(lines)
+
+
+async def _execute_pending_plan(
+    plan: PendingPlan,
+    *,
+    user_id: str | None = None,
+    preferred_model: str | None = None,
+) -> tuple[bool, str, AgentOutput | None]:
     progress_lines = [
         "Executing plan...",
         "\u2192 Step 1: [orchestrator] -> validate approved plan and prepare execution ... \u2713 done",
     ]
 
     try:
-        output = await _execute_route(plan.route, plan.request)
+        output = await _execute_route(
+            plan.route,
+            plan.request,
+            user_id=user_id,
+            preferred_model=preferred_model,
+        )
     except Exception as exc:
         progress_lines.append(
             "\u2192 Step 2: [agent] -> execute approved action ... \u2717 failed"
@@ -303,9 +413,10 @@ async def _execute_pending_plan(plan: PendingPlan) -> tuple[bool, str, AgentOutp
         "\u2192 Step 3: [orchestrator] -> assemble final response ... \u2713 done"
     )
 
+    execution_summary = _build_execution_summary(plan, output)
     result_message = (
         "\n".join(progress_lines)
-        + f"\n\nResult: {output['answer']}\n\nAnything needs adjustment?"
+        + f"\n\nResult:\n{output['answer']}\n\n{execution_summary}\n\nAnything needs adjustment?"
     )
     return True, result_message, output
 
@@ -335,12 +446,67 @@ def _is_local_open_intent(message: str) -> bool:
     return has_action_and_local or has_filename_hint
 
 
+def _is_local_app_open_intent(message: str) -> bool:
+    normalized = _normalize_message(message)
+    action_words = ["open", "launch", "start"]
+    app_words = [
+        "app",
+        "software",
+        "whatsapp",
+        "chrome",
+        "notepad",
+        "calculator",
+        "calc",
+        "vlc",
+        "discord",
+        "spotify",
+        "telegram",
+    ]
+    return any(word in normalized for word in action_words) and any(word in normalized for word in app_words)
+
+
+def _is_local_folder_create_intent(message: str) -> bool:
+    normalized = _normalize_message(message)
+    create_words = ["create", "make", "bna", "banado", "bnado", "new"]
+    folder_words = ["folder", "directory"]
+    local_words = ["drive", "disk", "pc", "laptop", "local"]
+    return any(word in normalized for word in create_words) and any(
+        word in normalized for word in folder_words
+    ) and any(word in normalized for word in local_words)
+
+
+def _is_email_send_intent(message: str) -> bool:
+    normalized = _normalize_message(message)
+    send_words = ["send", "bhejo", "email bhejo", "mail karo"]
+    mail_words = ["mail", "email", "gmail"]
+    return any(word in normalized for word in send_words) and any(word in normalized for word in mail_words)
+
+
+def _is_whatsapp_send_intent(message: str) -> bool:
+    normalized = _normalize_message(message)
+    has_whatsapp = "whatsapp" in normalized or "whats app" in normalized
+    has_message_action = any(
+        token in normalized for token in ["message", "msg", "text", "likho", "bhejo", "send"]
+    )
+    return has_whatsapp and has_message_action
+
+
+def _is_google_form_create_intent(message: str) -> bool:
+    normalized = _normalize_message(message)
+    has_form = any(token in normalized for token in ["google form", "google forms", "form", "forms"])
+    has_create = any(token in normalized for token in ["create", "make", "build", "generate", "bna", "banado"])
+    return has_form and has_create
+
+
 def route_intent(message: str) -> AgentRoute:
     text = message.lower()
 
-    if any(word in text for word in ["gmail", "slack", "outlook", "email", "message"]):
+    if _is_whatsapp_send_intent(text) or _is_google_form_create_intent(text) or _is_email_send_intent(text):
         return "comms"
-    if any(word in text for word in ["calendar", "meeting", "schedule", "invite"]):
+
+    if any(word in text for word in ["gmail", "slack", "discord", "outlook", "email", "message"]):
+        return "comms"
+    if any(word in text for word in ["calendar", "meeting", "meet", "schedule", "invite"]):
         return "calendar"
     if any(word in text for word in ["github", "gitlab", "pr", "pull request", "code"]):
         return "code"
@@ -348,6 +514,10 @@ def route_intent(message: str) -> AgentRoute:
         return "browser"
     if any(word in text for word in ["remember", "memory", "preference", "context"]):
         return "memory"
+    if _is_local_folder_create_intent(text):
+        return "docs"
+    if _is_local_app_open_intent(text):
+        return "docs"
     if _is_local_open_intent(text):
         return "docs"
     if any(
@@ -360,6 +530,8 @@ def route_intent(message: str) -> AgentRoute:
             "files",
             "drive",
             "pdf",
+            "form",
+            "forms",
             "notion",
             "summary",
             "summarize",
@@ -381,17 +553,26 @@ async def orchestrator_node(state: GraphState) -> dict:
 
 
 async def chat_node(state: GraphState) -> dict:
-    output: AgentOutput = await chat_agent.run(state["message"])
+    output: AgentOutput = await chat_agent.run(
+        state["message"],
+        preferred_model=state.get("preferred_model"),
+    )
     return output
 
 
 async def docs_node(state: GraphState) -> dict:
-    output: AgentOutput = await docs_agent.run(state["message"])
+    output: AgentOutput = await docs_agent.run(
+        state["message"],
+        preferred_model=state.get("preferred_model"),
+    )
     return output
 
 
 async def comms_node(state: GraphState) -> dict:
-    output: AgentOutput = await comms_agent.run(state["message"])
+    output: AgentOutput = await comms_agent.run(
+        state["message"],
+        user_id=state.get("user_id"),
+    )
     return output
 
 
@@ -460,7 +641,13 @@ def build_graph():
 graph = build_graph()
 
 
-async def run_orchestration(chat_id: str, message: str) -> GraphState:
+async def run_orchestration(
+    chat_id: str,
+    message: str,
+    *,
+    user_id: str | None = None,
+    preferred_model: str | None = None,
+) -> GraphState:
     pending_plan = PENDING_PLANS.get(chat_id)
 
     if not pending_plan:
@@ -526,7 +713,11 @@ async def run_orchestration(chat_id: str, message: str) -> GraphState:
             }
 
         if _is_approval(message):
-            succeeded, execution_message, output = await _execute_pending_plan(pending_plan)
+            succeeded, execution_message, output = await _execute_pending_plan(
+                pending_plan,
+                user_id=user_id,
+                preferred_model=preferred_model,
+            )
             if succeeded:
                 if pending_plan.route == "docs" and _is_local_open_intent(pending_plan.request):
                     LAST_LOCAL_OPEN_REQUESTS[chat_id] = pending_plan.request
@@ -577,7 +768,12 @@ async def run_orchestration(chat_id: str, message: str) -> GraphState:
         detected_route = "docs"
 
     if _wants_direct_answer(message) and _is_action_route(detected_route):
-        direct_output = await _execute_route(detected_route, effective_message)
+        direct_output = await _execute_route(
+            detected_route,
+            effective_message,
+            user_id=user_id,
+            preferred_model=preferred_model,
+        )
         return {
             "chat_id": chat_id,
             "message": message,
@@ -614,6 +810,8 @@ async def run_orchestration(chat_id: str, message: str) -> GraphState:
         "answer": "",
         "events": [],
         "tool_results": {},
+        "user_id": user_id or "anonymous",
+        "preferred_model": preferred_model or "",
     }
 
     result = await graph.ainvoke(initial_state)

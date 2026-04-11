@@ -14,4 +14,5 @@ python-jose[cryptography]==3.3.0
 python-dotenv==1.0.1
 qdrant-client==1.13.3
 openai==1.72.0
-fastembed==0.3.6
+fastembed==0.8.0
+playwright==1.52.0

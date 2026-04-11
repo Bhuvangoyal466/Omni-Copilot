@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import type { Route } from "next";
 import { useRouter } from "next/navigation";
 import { signOut } from "next-auth/react";
 import { Command, Github, Mail, NotepadText, Slack, Calendar } from "lucide-react";
@@ -8,6 +9,8 @@ import { Command, Github, Mail, NotepadText, Slack, Calendar } from "lucide-reac
 import { Sidebar } from "@/components/ui/modern-side-bar";
 import { BackgroundPaths } from "@/components/ui/background-paths";
 import { OmniCommandPalette, type OmniItem, type OmniSource } from "@/components/ui/omni-command-palette";
+import { OmniVoiceLauncher } from "@/components/voice/omni-voice-launcher";
+import { createNewChatHref } from "@/lib/utils";
 
 export function AppChrome({ children }: { children: React.ReactNode }) {
   const router = useRouter();
@@ -25,7 +28,7 @@ export function AppChrome({ children }: { children: React.ReactNode }) {
               groupId: "navigation",
               label: "Open Chat",
               subtitle: "Start a new universal agent conversation",
-              href: "/chat/new",
+              href: createNewChatHref() as Route,
               shortcut: ["G", "C"],
               pinned: true
             },
@@ -70,7 +73,7 @@ export function AppChrome({ children }: { children: React.ReactNode }) {
               label: "Search Gmail",
               subtitle: "Find unread emails from today",
               icon: <Mail className="h-4 w-4" />,
-              onAction: () => router.push("/chat/new?prompt=Search+my+unread+Gmail+messages")
+              onAction: () => router.push(createNewChatHref("Search my unread Gmail messages") as Route)
             },
             {
               id: "tool-calendar",
@@ -78,7 +81,7 @@ export function AppChrome({ children }: { children: React.ReactNode }) {
               label: "Plan Today",
               subtitle: "Summarize my meetings and prep notes",
               icon: <Calendar className="h-4 w-4" />,
-              onAction: () => router.push("/chat/new?prompt=Summarize+my+calendar+for+today")
+              onAction: () => router.push(createNewChatHref("Summarize my calendar for today") as Route)
             },
             {
               id: "tool-github",
@@ -86,7 +89,7 @@ export function AppChrome({ children }: { children: React.ReactNode }) {
               label: "Review GitHub PRs",
               subtitle: "Check open pull requests assigned to me",
               icon: <Github className="h-4 w-4" />,
-              onAction: () => router.push("/chat/new?prompt=List+my+assigned+open+GitHub+PRs")
+              onAction: () => router.push(createNewChatHref("List my assigned open GitHub PRs") as Route)
             },
             {
               id: "tool-notion",
@@ -94,7 +97,7 @@ export function AppChrome({ children }: { children: React.ReactNode }) {
               label: "Summarize Notion Notes",
               subtitle: "Generate action items from meeting notes",
               icon: <NotepadText className="h-4 w-4" />,
-              onAction: () => router.push("/chat/new?prompt=Summarize+my+Notion+meeting+notes")
+              onAction: () => router.push(createNewChatHref("Summarize my Notion meeting notes") as Route)
             },
             {
               id: "tool-slack",
@@ -102,7 +105,7 @@ export function AppChrome({ children }: { children: React.ReactNode }) {
               label: "Digest Slack",
               subtitle: "Provide key updates from #team channel",
               icon: <Slack className="h-4 w-4" />,
-              onAction: () => router.push("/chat/new?prompt=Create+a+digest+from+Slack+team+channel")
+              onAction: () => router.push(createNewChatHref("Create a digest from Slack team channel") as Route)
             }
           ];
 
@@ -129,6 +132,8 @@ export function AppChrome({ children }: { children: React.ReactNode }) {
         onOpenChange={setOpenPalette}
         sources={paletteSources}
       />
+
+      <OmniVoiceLauncher />
 
       <div className="relative z-10 lg:pl-[280px]">
         <header className="sticky top-0 z-20 flex items-center justify-between border-b border-border/70 bg-background/75 px-4 py-3 backdrop-blur-xl sm:px-6 dark:border-white/10 dark:bg-black/35">

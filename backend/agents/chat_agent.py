@@ -43,7 +43,7 @@ class ChatAgent:
             "Tell me the exact outcome you want, and I will execute it step by step."
         )
 
-    async def run(self, user_message: str) -> AgentOutput:
+    async def run(self, user_message: str, *, preferred_model: str | None = None) -> AgentOutput:
         events: list[AgentEvent] = [
             {"agent": self.name, "message": "Thinking", "status": "running"}
         ]
@@ -63,6 +63,7 @@ class ChatAgent:
                 "tools": ["docs", "comms", "calendar", "code", "browser", "memory"],
             },
             max_tokens=260,
+            preferred_model=preferred_model,
         )
 
         if not answer:

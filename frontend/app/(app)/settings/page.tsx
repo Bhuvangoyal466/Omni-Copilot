@@ -1,6 +1,5 @@
 "use client";
 
-import { useState } from "react";
 import { CheckCircle2, History, Moon, RotateCcw, Sun } from "lucide-react";
 import { useTheme } from "next-themes";
 
@@ -8,9 +7,10 @@ import { Button } from "@/components/ui/button";
 import { useAppStore } from "@/lib/store/app-store";
 
 export default function SettingsPage() {
-  const [selectedModel, setSelectedModel] = useState("gpt-5.4-mini");
   const { theme, setTheme } = useTheme();
 
+  const selectedModel = useAppStore((s) => s.selectedModel);
+  const setSelectedModel = useAppStore((s) => s.setSelectedModel);
   const auditLog = useAppStore((s) => s.auditLog);
   const markAuditUndone = useAppStore((s) => s.markAuditUndone);
 
@@ -33,9 +33,9 @@ export default function SettingsPage() {
               onChange={(event) => setSelectedModel(event.target.value)}
               className="h-11 w-full rounded-xl border border-border/70 bg-background/70 px-3 text-sm text-foreground outline-none dark:border-white/20 dark:bg-white/5 dark:text-white"
             >
+              <option value="llama-3.3-70b-versatile">Groq Llama 3.3 70B</option>
               <option value="gpt-5.4-mini">OpenAI GPT-5.4 Mini</option>
               <option value="gpt-5.4">OpenAI GPT-5.4</option>
-              <option value="llama-3.3-70b-versatile">Groq Llama 3.3 70B</option>
               <option value="qwen-qwq-32b">Groq Qwen QwQ 32B</option>
               <option value="deepseek-r1-distill-llama-70b">Groq DeepSeek R1 Distill Llama 70B</option>
             </select>

@@ -2,6 +2,7 @@
 
 from agents.types import AgentEvent, AgentOutput
 from tools.gcal import list_upcoming_events
+from tools.gmeet import list_meet_sessions
 
 
 class CalendarAgent:
@@ -13,6 +14,7 @@ class CalendarAgent:
         ]
 
         meetings = await list_upcoming_events(query=user_message)
+        meet_sessions = await list_meet_sessions(query=user_message)
 
         events.append(
             {
@@ -23,13 +25,16 @@ class CalendarAgent:
         )
 
         if meetings:
-            answer = f"You have {len(meetings)} relevant events. I can draft prep notes for each."
+            answer = (
+                f"You have {len(meetings)} relevant calendar events and {len(meet_sessions)} Google Meet sessions. "
+                "I can draft prep notes for each."
+            )
         else:
             answer = "No matching meetings found. I can still create a schedule template for today."
 
         return {
             "answer": answer,
             "events": events,
-            "tool_results": {"events": meetings},
+            "tool_results": {"events": meetings, "meet": meet_sessions},
         }
 

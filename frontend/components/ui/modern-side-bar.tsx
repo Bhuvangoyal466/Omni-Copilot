@@ -19,6 +19,9 @@ import {
 } from "lucide-react";
 import { usePathname, useRouter } from "next/navigation";
 
+import { useAppStore } from "@/lib/store/app-store";
+import { createNewChatHref } from "@/lib/utils";
+
 interface NavigationItem {
   id: string;
   name: string;
@@ -34,7 +37,7 @@ interface SidebarProps {
 
 const navigationItems: NavigationItem[] = [
   { id: "chat", name: "Chat", icon: MessageSquareText, href: "/chat/new" },
-  { id: "integrations", name: "Integrations", icon: PlugZap, href: "/integrations", badge: "6" },
+  { id: "integrations", name: "Integrations", icon: PlugZap, href: "/integrations", badge: "9" },
   { id: "memory", name: "Memory", icon: Brain, href: "/memory" },
   { id: "history", name: "History", icon: BookUser, href: "/settings#audit" },
   { id: "settings", name: "Settings", icon: Settings, href: "/settings" }
@@ -43,6 +46,7 @@ const navigationItems: NavigationItem[] = [
 export function Sidebar({ className = "", onSignOut }: SidebarProps) {
   const router = useRouter();
   const pathname = usePathname();
+  const messagesByChat = useAppStore((s) => s.messagesByChat);
   const [isOpen, setIsOpen] = useState(false);
   const [isCollapsed, setIsCollapsed] = useState(false);
 
@@ -59,6 +63,22 @@ export function Sidebar({ className = "", onSignOut }: SidebarProps) {
     if (pathname.startsWith("/settings")) return "settings";
     return "chat";
   }, [pathname]);
+
+  const recentChats = useMemo(() => {
+    return Object.entries(messagesByChat)
+      .map(([chatId, messages]) => {
+        const lastMessage = messages[messages.length - 1];
+        const firstUser = messages.find((msg) => msg.role === "user")?.content || "New chat";
+        const title = firstUser.length > 38 ? `${firstUser.slice(0, 38)}...` : firstUser;
+        return {
+          id: chatId,
+          title,
+          updatedAt: lastMessage?.createdAt || ""
+        };
+      })
+      .sort((a, b) => (a.updatedAt < b.updatedAt ? 1 : -1))
+      .slice(0, 12);
+  }, [messagesByChat]);
 
   return (
     <>
@@ -140,7 +160,8 @@ export function Sidebar({ className = "", onSignOut }: SidebarProps) {
               <button
                 key={item.id}
                 onClick={() => {
-                  router.push(item.href as Route);
+                  const targetHref = item.id === "chat" ? createNewChatHref() : item.href;
+                  router.push(targetHref as Route);
                   if (window.innerWidth < 1024) {
                     setIsOpen(false);
                   }
@@ -168,6 +189,53 @@ export function Sidebar({ className = "", onSignOut }: SidebarProps) {
               </button>
             );
           })}
+
+          {!isCollapsed && (
+            <div className="mt-4 space-y-2">
+              <div className="flex items-center justify-between px-2">
+                <p className="text-[10px] uppercase tracking-[0.16em] text-muted-foreground dark:text-white/55">
+                  Recent Chats
+                </p>
+                <button
+                  className="text-xs text-cyan-600 hover:underline dark:text-cyan-300"
+                  onClick={() => {
+                    router.push(createNewChatHref() as Route);
+                  }}
+                >
+                  New
+                </button>
+              </div>
+
+              <div className="space-y-1">
+                {recentChats.length === 0 && (
+                  <p className="px-2 py-1 text-xs text-muted-foreground dark:text-white/45">No chats yet</p>
+                )}
+
+                {recentChats.map((chat) => {
+                  const isActiveChat = pathname === `/chat/${chat.id}`;
+                  return (
+                    <button
+                      key={chat.id}
+                      onClick={() => {
+                        router.push(`/chat/${chat.id}` as Route);
+                        if (window.innerWidth < 1024) {
+                          setIsOpen(false);
+                        }
+                      }}
+                      className={`w-full rounded-lg px-2 py-1.5 text-left text-xs transition ${
+                        isActiveChat
+                          ? "bg-cyan-500/20 text-cyan-700 dark:text-cyan-200"
+                          : "text-foreground/75 hover:bg-accent dark:text-white/70 dark:hover:bg-white/10"
+                      }`}
+                      title={chat.title}
+                    >
+                      <p className="truncate">{chat.title}</p>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          )}
         </nav>
 
         <div className="space-y-2 border-t border-border/70 p-3 dark:border-white/10">

@@ -5,6 +5,7 @@ import random
 from collections.abc import Sequence
 from typing import Any
 
+import httpx
 from fastembed import TextEmbedding
 from qdrant_client import QdrantClient
 from qdrant_client.http import models
@@ -18,6 +19,8 @@ class MemoryVectorStore:
         self.collection = settings.qdrant_collection
         self.vector_size = 384
         self._embedder: TextEmbedding | None = None
+        self.mem0_enabled = settings.mem0_enabled and bool(settings.mem0_api_key)
+        self.mem0_base_url = "https://api.mem0.ai/v1"
 
     def _get_embedder(self) -> TextEmbedding:
         if self._embedder is None:
@@ -72,21 +75,96 @@ class MemoryVectorStore:
             )
 
     async def upsert_memory(self, user_id: str, text: str, metadata: dict[str, Any] | None = None) -> None:
-        await self.ensure_collection()
-        vector = self._embed_text(text)
-        payload = {"user_id": user_id, "text": text, **(metadata or {})}
-        point_id = hashlib.md5(f"{user_id}:{text}".encode("utf-8")).hexdigest()
-        self._client.upsert(
-            collection_name=self.collection,
-            points=[models.PointStruct(id=point_id, vector=vector, payload=payload)],
-        )
-
-    async def search_memory(self, query: str, limit: int = 5) -> list[dict[str, Any]]:
-        await self.ensure_collection()
-        vector = self._embed_text(query)
+        if self.mem0_enabled:
+            await self._upsert_mem0(user_id=user_id, text=text, metadata=metadata)
 
         try:
-            results = self._client.search(collection_name=self.collection, query_vector=vector, limit=limit)
+            await self.ensure_collection()
+            vector = self._embed_text(text)
+            payload = {"user_id": user_id, "text": text, **(metadata or {})}
+            point_id = hashlib.md5(f"{user_id}:{text}".encode("utf-8")).hexdigest()
+            self._client.upsert(
+                collection_name=self.collection,
+                points=[models.PointStruct(id=point_id, vector=vector, payload=payload)],
+            )
+        except Exception:
+            return
+
+    async def _upsert_mem0(self, user_id: str, text: str, metadata: dict[str, Any] | None = None) -> None:
+        try:
+            async with httpx.AsyncClient(timeout=15) as client:
+                await client.post(
+                    f"{self.mem0_base_url}/memories",
+                    headers={
+                        "Authorization": f"Token {settings.mem0_api_key}",
+                        "Content-Type": "application/json",
+                    },
+                    json={
+                        "text": text,
+                        "user_id": user_id,
+                        "metadata": metadata or {},
+                    },
+                )
+        except Exception:
+            return
+
+    async def _search_mem0(self, query: str, user_id: str, limit: int) -> list[dict[str, Any]]:
+        try:
+            async with httpx.AsyncClient(timeout=15) as client:
+                response = await client.post(
+                    f"{self.mem0_base_url}/search",
+                    headers={
+                        "Authorization": f"Token {settings.mem0_api_key}",
+                        "Content-Type": "application/json",
+                    },
+                    json={
+                        "query": query,
+                        "user_id": user_id,
+                        "limit": limit,
+                    },
+                )
+            if response.status_code >= 400:
+                return []
+
+            payload = response.json()
+            if isinstance(payload, list):
+                return [item for item in payload if isinstance(item, dict)]
+
+            if isinstance(payload, dict):
+                data = payload.get("data")
+                if isinstance(data, list):
+                    return [item for item in data if isinstance(item, dict)]
+            return []
+        except Exception:
+            return []
+
+    async def search_memory(
+        self,
+        query: str,
+        limit: int = 5,
+        *,
+        user_id: str | None = None,
+    ) -> list[dict[str, Any]]:
+        if self.mem0_enabled and user_id:
+            mem0_results = await self._search_mem0(query=query, user_id=user_id, limit=limit)
+            if mem0_results:
+                return mem0_results
+
+        await self.ensure_collection()
+        vector = self._embed_text(query)
+        query_filter = None
+        if user_id:
+            query_filter = models.Filter(
+                must=[models.FieldCondition(key="user_id", match=models.MatchValue(value=user_id))]
+            )
+
+        try:
+            results = self._client.search(
+                collection_name=self.collection,
+                query_vector=vector,
+                query_filter=query_filter,
+                limit=limit,
+            )
         except Exception:
             return []
 

@@ -82,6 +82,101 @@ Configured files:
 
 `*.env.example` files intentionally use placeholders only. Add your real keys and database URL in local `.env` files.
 
+## Production Integrations Setup (Google, Slack, Discord, Notion, GitHub)
+
+This project now uses real OAuth connection flows (not instant demo toggles).
+
+### 1) Frontend env (`frontend/.env`)
+
+Set:
+
+- `NEXTAUTH_SECRET`
+- `NEXTAUTH_URL=http://localhost:3000`
+- `GOOGLE_CLIENT_ID`
+- `GOOGLE_CLIENT_SECRET`
+- `BACKEND_API_URL=http://localhost:8000`
+
+### 2) Backend env (`backend/.env`)
+
+Set:
+
+- `FRONTEND_APP_URL=http://localhost:3000`
+- `OAUTH_REDIRECT_BASE_URL=http://localhost:3000`
+- `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`
+- `SLACK_CLIENT_ID`, `SLACK_CLIENT_SECRET`
+- `DISCORD_CLIENT_ID`, `DISCORD_CLIENT_SECRET`
+- `NOTION_CLIENT_ID`, `NOTION_CLIENT_SECRET`
+- `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET`
+- `DEFAULT_MODEL=llama-3.3-70b-versatile`
+- `JWT_SECRET`
+- optional mem0:
+	- `MEM0_ENABLED=true`
+	- `MEM0_API_KEY=...`
+
+### 3) OAuth redirect URLs to register in provider consoles
+
+Register frontend callback URLs (frontend route forwards to backend callback automatically):
+
+- Google:
+	- `http://localhost:3000/api/integrations/gmail/callback`
+	- `http://localhost:3000/api/integrations/gcal/callback`
+	- `http://localhost:3000/api/integrations/gmeet/callback`
+	- `http://localhost:3000/api/integrations/gforms/callback`
+	- `http://localhost:3000/api/integrations/drive/callback`
+- Slack:
+	- `http://localhost:3000/api/integrations/slack/callback`
+- Discord:
+	- `http://localhost:3000/api/integrations/discord/callback`
+- Notion:
+	- `http://localhost:3000/api/integrations/notion/callback`
+- GitHub:
+	- `http://localhost:3000/api/integrations/github/callback`
+
+### 4) Google scopes to enable in OAuth consent screen
+
+- `openid`
+- `email`
+- `profile`
+- `https://www.googleapis.com/auth/gmail.readonly`
+- `https://www.googleapis.com/auth/gmail.send`
+- `https://www.googleapis.com/auth/calendar`
+- `https://www.googleapis.com/auth/drive.readonly`
+- `https://www.googleapis.com/auth/forms.responses.readonly`
+- `https://www.googleapis.com/auth/forms.body`
+- `https://www.googleapis.com/auth/meetings.space.created`
+
+### 4.1) WhatsApp live automation prerequisites
+
+- Install Playwright in backend environment:
+	- `pip install playwright`
+	- `playwright install chromium`
+- First run may require scanning WhatsApp Web QR code.
+- Optional: set `OMNI_WHATSAPP_CONFIRMATION_MS=6000` to keep automation window visible after message send.
+
+### 4.2) Voice Arena TTS (Groq)
+
+- Set backend env values:
+	- `GROQ_TTS_MODEL` (default: `playai-tts`)
+	- `GROQ_TTS_VOICE_EN` (default: `alloy`)
+	- `GROQ_TTS_VOICE_HI` (default: `alloy`)
+
+### 5) Start services
+
+1. Start backend: `uvicorn main:app --reload --port 8000`
+2. Start frontend: `npm run dev` in `frontend/`
+3. Login via `Continue with Google`
+4. Go to Integrations and click Connect for each tool
+
+### 6) Chat memory and history
+
+- Chat now writes memory context per user on backend (`qdrant` + optional `mem0`).
+- Frontend chat history is persisted in local storage and shown in sidebar as recent chats.
+
+### 7) Plan UX
+
+- Plan messages render as a styled card.
+- Accept and Decline buttons are shown under plans in chat UI.
+
 ## Prisma Database and Studio
 
 From `frontend/` run:

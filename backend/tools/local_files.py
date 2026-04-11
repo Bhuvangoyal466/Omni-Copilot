@@ -6,6 +6,7 @@ import re
 import shutil
 import subprocess
 import sys
+import webbrowser
 from pathlib import Path
 from typing import Any
 
@@ -89,6 +90,26 @@ VLC_WINDOWS_PATHS = (
     Path("C:/Program Files/VideoLAN/VLC/vlc.exe"),
     Path("C:/Program Files (x86)/VideoLAN/VLC/vlc.exe"),
 )
+APP_KEYWORDS: dict[str, tuple[str, ...]] = {
+    "whatsapp": ("whatsapp", "whats app"),
+    "chrome": ("chrome", "google chrome"),
+    "notepad": ("notepad",),
+    "calculator": ("calculator", "calc"),
+    "vlc": ("vlc",),
+    "discord": ("discord",),
+    "spotify": ("spotify",),
+    "telegram": ("telegram",),
+}
+APP_EXECUTABLES: dict[str, tuple[str, ...]] = {
+    "whatsapp": ("WhatsApp.exe", "whatsapp.exe"),
+    "chrome": ("chrome.exe",),
+    "notepad": ("notepad.exe",),
+    "calculator": ("calc.exe",),
+    "vlc": ("vlc.exe",),
+    "discord": ("Discord.exe", "discord.exe"),
+    "spotify": ("Spotify.exe", "spotify.exe"),
+    "telegram": ("Telegram.exe", "telegram.exe"),
+}
 
 
 def _normalize_text(text: str) -> str:
@@ -368,6 +389,132 @@ def _open_local_file_sync(file_path: str, use_vlc: bool = False) -> tuple[bool, 
 
 async def open_local_file(file_path: str, *, use_vlc: bool = False) -> tuple[bool, str]:
     return await asyncio.to_thread(_open_local_file_sync, file_path, use_vlc)
+
+
+def _detect_requested_app(prompt: str) -> str | None:
+    normalized = _normalize_text(prompt)
+    for app_name, keywords in APP_KEYWORDS.items():
+        if any(keyword in normalized for keyword in keywords):
+            return app_name
+
+    generic_match = re.search(r"\b(?:open|launch|start)\s+([a-z0-9][a-z0-9 ._-]{1,42})", normalized)
+    if generic_match:
+        raw_candidate = generic_match.group(1)
+        candidate = re.split(r"\b(?:app|software|please|pls|and|then)\b", raw_candidate, maxsplit=1)[0]
+        candidate = re.sub(r"\s+", " ", candidate).strip(" .")
+        if candidate and candidate not in {"my", "pc", "laptop", "computer", "local"}:
+            return candidate
+
+    return None
+
+
+def _resolve_executable(app_name: str) -> str | None:
+    for executable in APP_EXECUTABLES.get(app_name, ()): 
+        found = shutil.which(executable)
+        if found:
+            return found
+
+    dynamic_candidates: list[str] = [app_name]
+    if not app_name.lower().endswith(".exe"):
+        dynamic_candidates.append(f"{app_name}.exe")
+
+    for candidate in dynamic_candidates:
+        found = shutil.which(candidate)
+        if found:
+            return found
+
+    return None
+
+
+def _open_whatsapp_fallback() -> tuple[bool, str]:
+    try:
+        if os.name == "nt":
+            os.startfile("whatsapp://")  # type: ignore[attr-defined]
+            return True, "Opened WhatsApp"
+    except Exception:
+        pass
+
+    opened = webbrowser.open("https://web.whatsapp.com", new=2)
+    if opened:
+        return True, "Opened WhatsApp Web in browser"
+    return False, "Could not open WhatsApp app or WhatsApp Web."
+
+
+def _open_local_application_sync(prompt: str) -> tuple[bool, str, str | None]:
+    app_name = _detect_requested_app(prompt)
+    if not app_name:
+        return (
+            False,
+            "I could not detect which local app to open. Mention app name like WhatsApp, Chrome, VLC, or Notepad.",
+            None,
+        )
+
+    if app_name == "whatsapp":
+        ok, message = _open_whatsapp_fallback()
+        return ok, message, app_name
+
+    executable = _resolve_executable(app_name)
+    if not executable:
+        if os.name == "nt":
+            try:
+                # Let Windows resolve registered app aliases for broader app support.
+                subprocess.Popen(["cmd", "/c", "start", "", app_name])
+                return True, f"Tried launching {app_name.title()} using Windows app resolver.", app_name
+            except Exception:
+                pass
+
+        return False, f"{app_name.title()} is not installed or not found in PATH.", app_name
+
+    try:
+        subprocess.Popen([executable])
+    except Exception as exc:
+        return False, f"Failed to open {app_name.title()}: {exc}", app_name
+
+    return True, f"Opened {app_name.title()}.", app_name
+
+
+async def open_local_application_from_prompt(prompt: str) -> tuple[bool, str, str | None]:
+    return await asyncio.to_thread(_open_local_application_sync, prompt)
+
+
+def _create_local_folder_sync(prompt: str) -> tuple[bool, str, str | None]:
+    normalized = prompt.strip()
+    if not normalized:
+        return False, "Folder prompt was empty.", None
+
+    drive_match = re.search(r"(?:drive|disk)\s*([a-z])\b", normalized, flags=re.IGNORECASE)
+    target_drive = f"{drive_match.group(1).upper()}:/" if drive_match else None
+
+    quoted_name = re.search(r"['\"]([a-zA-Z0-9 _-]{2,})['\"]", normalized)
+    inferred_name = re.search(r"\b([a-zA-Z0-9_-]{2,})\s+name\b", normalized, flags=re.IGNORECASE)
+    after_folder = re.search(r"folder\s+([a-zA-Z0-9_-]{2,})", normalized, flags=re.IGNORECASE)
+    folder_name = (
+        (quoted_name.group(1) if quoted_name else None)
+        or (inferred_name.group(1) if inferred_name else None)
+        or (after_folder.group(1) if after_folder else None)
+    )
+
+    if not folder_name:
+        return False, "Could not detect folder name from request.", None
+
+    base_path = Path(target_drive) if target_drive else Path.home() / "Desktop"
+    if not base_path.exists():
+        return False, f"Target location not found: {base_path}", None
+
+    folder_path = base_path / folder_name
+    if folder_path.exists():
+        return True, f"Folder already exists: {folder_path}", str(folder_path)
+
+    try:
+        folder_path.mkdir(parents=True, exist_ok=False)
+    except Exception as exc:
+        return False, f"Failed to create folder: {exc}", None
+
+    return True, f"Created folder at {folder_path}", str(folder_path)
+
+
+async def create_local_folder_from_prompt(prompt: str) -> tuple[bool, str, str | None]:
+    return await asyncio.to_thread(_create_local_folder_sync, prompt)
 
 
 async def search_local_files(query: str) -> list[dict[str, Any]]:

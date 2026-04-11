@@ -1,7 +1,9 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
-import { Files, UploadCloud } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { Files, Plus, UploadCloud } from "lucide-react";
+import type { Route } from "next";
+import { useRouter } from "next/navigation";
 
 import { AI_Prompt } from "@/components/ui/animated-ai-input";
 import { FileUploadCard, type UploadedFile } from "@/components/ui/file-upload-card";
@@ -12,10 +14,11 @@ import { AgentTimeline } from "@/components/agent/agent-timeline";
 import { useChat } from "@/lib/hooks/use-chat";
 import { useAgentStream } from "@/lib/hooks/use-agent-stream";
 import { useAppStore } from "@/lib/store/app-store";
-import { createId } from "@/lib/utils";
+import { createId, createNewChatHref } from "@/lib/utils";
 
 interface ChatWorkspaceProps {
   chatId: string;
+  initialPrompt?: string;
 }
 
 function normalizeFileType(file: File) {
@@ -31,10 +34,12 @@ function normalizeFileType(file: File) {
   return "file";
 }
 
-export function ChatWorkspace({ chatId }: ChatWorkspaceProps) {
+export function ChatWorkspace({ chatId, initialPrompt = "" }: ChatWorkspaceProps) {
+  const router = useRouter();
   const [showDropzone, setShowDropzone] = useState(false);
   const [uploads, setUploads] = useState<UploadedFile[]>([]);
   const [toastItems, setToastItems] = useState<UploadItem[]>([]);
+  const hasAutoPromptSentRef = useRef(false);
 
   const setActiveChat = useAppStore((s) => s.setActiveChat);
   const { messages, isStreaming, error, sendMessage } = useChat(chatId);
@@ -43,6 +48,20 @@ export function ChatWorkspace({ chatId }: ChatWorkspaceProps) {
   useEffect(() => {
     setActiveChat(chatId);
   }, [chatId, setActiveChat]);
+
+  useEffect(() => {
+    hasAutoPromptSentRef.current = false;
+  }, [chatId]);
+
+  useEffect(() => {
+    const promptText = initialPrompt.trim();
+    if (!promptText || hasAutoPromptSentRef.current || isStreaming || messages.length > 0) {
+      return;
+    }
+
+    hasAutoPromptSentRef.current = true;
+    void sendMessage({ chatId, message: promptText });
+  }, [chatId, initialPrompt, isStreaming, messages.length, sendMessage]);
 
   const startUploadSimulation = (id: string) => {
     let progress = 0;
@@ -126,13 +145,23 @@ export function ChatWorkspace({ chatId }: ChatWorkspaceProps) {
               <h1 className="text-lg font-semibold text-foreground dark:text-white">Session: {chatId}</h1>
             </div>
 
-            <button
-              onClick={() => setShowDropzone((prev) => !prev)}
-              className="inline-flex items-center gap-2 rounded-xl border border-border/70 bg-background/70 px-3 py-2 text-sm text-foreground/80 transition hover:bg-accent dark:border-white/20 dark:bg-white/5 dark:text-white/80 dark:hover:bg-white/10"
-            >
-              {showDropzone ? <Files className="h-4 w-4" /> : <UploadCloud className="h-4 w-4" />}
-              {showDropzone ? "Hide Uploads" : "Upload Files"}
-            </button>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => router.push(createNewChatHref() as Route)}
+                className="inline-flex items-center gap-2 rounded-xl bg-cyan-500 px-3 py-2 text-sm font-medium text-black transition hover:bg-cyan-400"
+              >
+                <Plus className="h-4 w-4" />
+                New Chat
+              </button>
+
+              <button
+                onClick={() => setShowDropzone((prev) => !prev)}
+                className="inline-flex items-center gap-2 rounded-xl border border-border/70 bg-background/70 px-3 py-2 text-sm text-foreground/80 transition hover:bg-accent dark:border-white/20 dark:bg-white/5 dark:text-white/80 dark:hover:bg-white/10"
+              >
+                {showDropzone ? <Files className="h-4 w-4" /> : <UploadCloud className="h-4 w-4" />}
+                {showDropzone ? "Hide Uploads" : "Upload Files"}
+              </button>
+            </div>
           </div>
 
           {showDropzone && (
@@ -148,7 +177,19 @@ export function ChatWorkspace({ chatId }: ChatWorkspaceProps) {
           )}
 
           <div className="max-h-[50vh] space-y-4 overflow-y-auto pr-1 sm:max-h-[56vh]">
-            <MessageList messages={sortedMessages} />
+            <MessageList
+              messages={sortedMessages}
+              planActionsDisabled={isStreaming}
+              onPlanAccept={() => {
+                void sendMessage({ chatId, message: "yes" });
+              }}
+              onPlanDecline={() => {
+                void sendMessage({ chatId, message: "cancel" });
+              }}
+              onPlanEdit={(instruction) => {
+                void sendMessage({ chatId, message: `change: ${instruction}` });
+              }}
+            />
             {isStreaming && <TypingIndicator />}
             {error && <p className="text-sm text-rose-600 dark:text-rose-300">{error}</p>}
           </div>

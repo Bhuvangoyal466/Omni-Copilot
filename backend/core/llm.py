@@ -10,20 +10,49 @@ try:
 except Exception:  # pragma: no cover - handled gracefully at runtime
     AsyncOpenAI = None  # type: ignore[assignment]
 
-_client: Any | None = None
+_openai_client: Any | None = None
+_groq_client: Any | None = None
 
 
-def _get_client() -> Any | None:
-    global _client
+def _model_provider(model: str) -> str:
+    normalized = model.strip().lower()
+    if normalized.startswith(("gpt-", "o1", "o3", "o4")):
+        return "openai"
+    return "groq"
 
-    if _client is not None:
-        return _client
 
-    if not settings.openai_api_key or AsyncOpenAI is None:
-        return None
+def _get_client(provider: str) -> Any | None:
+    global _openai_client, _groq_client
 
-    _client = AsyncOpenAI(api_key=settings.openai_api_key)
-    return _client
+    if provider == "openai":
+        if _openai_client is not None:
+            return _openai_client
+        if not settings.openai_api_key or AsyncOpenAI is None:
+            return None
+        _openai_client = AsyncOpenAI(api_key=settings.openai_api_key)
+        return _openai_client
+
+    if provider == "groq":
+        if _groq_client is not None:
+            return _groq_client
+        if not settings.groq_api_key or AsyncOpenAI is None:
+            return None
+        _groq_client = AsyncOpenAI(
+            api_key=settings.groq_api_key,
+            base_url="https://api.groq.com/openai/v1",
+        )
+        return _groq_client
+
+    return None
+
+
+def _candidate_models(preferred_model: str | None) -> list[str]:
+    ordered: list[str] = []
+    for value in (preferred_model, settings.default_model, settings.fallback_model):
+        model = (value or "").strip()
+        if model and model not in ordered:
+            ordered.append(model)
+    return ordered
 
 
 async def generate_assistant_reply(
@@ -32,9 +61,10 @@ async def generate_assistant_reply(
     system_prompt: str,
     context: dict[str, Any] | None = None,
     max_tokens: int = 300,
+    preferred_model: str | None = None,
 ) -> str | None:
-    client = _get_client()
-    if client is None:
+    models = _candidate_models(preferred_model)
+    if not models:
         return None
 
     context_text = ""
@@ -43,7 +73,12 @@ async def generate_assistant_reply(
 
     user_payload = f"User message:\n{user_message}{context_text}"
 
-    for model in (settings.default_model, settings.fallback_model):
+    for model in models:
+        provider = _model_provider(model)
+        client = _get_client(provider)
+        if client is None:
+            continue
+
         try:
             completion = await client.chat.completions.create(
                 model=model,
