@@ -451,32 +451,45 @@ async def open_local_file(file_path: str, *, use_vlc: bool = False) -> tuple[boo
 
 def _detect_requested_app(prompt: str) -> str | None:
     normalized = _normalize_text(prompt)
+    command_match = re.search(
+        r"(?:^|[.!?]\s+)(?:please\s+|can\s+you\s+|could\s+you\s+|kindly\s+|omni\s+)?"
+        r"(?:open|launch|start|run|khol|kholo)\s+([a-z0-9][a-z0-9 ._-]{1,64})",
+        normalized,
+    )
+    if not command_match:
+        return None
+
+    raw_candidate = command_match.group(1)
+    candidate = re.split(
+        r"\b(?:app|software|please|pls|and|then|search|for|in|on|website|web|browser|with)\b",
+        raw_candidate,
+        maxsplit=1,
+    )[0]
+    candidate = re.sub(r"\s+", " ", candidate).strip(" .")
+    if not candidate:
+        return None
+
     for app_name, keywords in APP_KEYWORDS.items():
-        if any(keyword in normalized for keyword in keywords):
+        if any(keyword in candidate for keyword in keywords):
             return app_name
 
-    generic_match = re.search(r"\b(?:open|launch|start)\s+([a-z0-9][a-z0-9 ._-]{1,42})", normalized)
-    if generic_match:
-        raw_candidate = generic_match.group(1)
-        candidate = re.split(r"\b(?:app|software|please|pls|and|then|search|for|in|on)\b", raw_candidate, maxsplit=1)[0]
-        candidate = re.sub(r"\s+", " ", candidate).strip(" .")
-        if candidate and candidate not in {
-            "my",
-            "pc",
-            "laptop",
-            "computer",
-            "local",
-            "a",
-            "an",
-            "the",
-            "file",
-            "folder",
-            "website",
-            "web",
-        }:
-            return candidate
+    if candidate in {
+        "my",
+        "pc",
+        "laptop",
+        "computer",
+        "local",
+        "a",
+        "an",
+        "the",
+        "file",
+        "folder",
+        "website",
+        "web",
+    }:
+        return None
 
-    return None
+    return candidate
 
 
 def looks_like_local_app_request(prompt: str) -> bool:

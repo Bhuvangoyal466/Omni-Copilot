@@ -33,11 +33,14 @@ class DocsAgent:
     @staticmethod
     def _is_local_open_request(message: str) -> bool:
         normalized = re.sub(r"\s+", " ", message.lower()).strip()
-        action_words = ["open", "oepn", "opne", "play", "launch", "start"]
-        local_words = ["pc", "laptop", "local", "computer", "movie", "video", "from my", "drive", "disk", "vlc"]
-        has_action_and_local = any(word in normalized for word in action_words) and any(
-            word in normalized for word in local_words
+        action_phrase = re.search(
+            r"(?:^|[.!?]\s+)(?:please\s+|can\s+you\s+|could\s+you\s+|kindly\s+)?"
+            r"(?:open|oepn|opne|play|launch|start)\s+",
+            normalized,
         )
+        local_words = ["pc", "local", "computer", "from my", "drive", "disk", "vlc", "file", "folder"]
+        has_local_context = any(word in normalized for word in local_words)
+        has_action_and_local = bool(action_phrase) and has_local_context
 
         has_media_hint = bool(
             re.search(r"\b(mp4|mkv|avi|mov|webm|wmv|flv|m4v)\b", normalized)

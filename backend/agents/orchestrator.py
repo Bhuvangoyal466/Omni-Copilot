@@ -191,6 +191,9 @@ def _risk_level(route: AgentRoute, request: str) -> str:
     if route == "comms" and _is_whatsapp_send_intent(request):
         return "Medium"
 
+    if route == "comms" and _is_google_sheet_create_intent(request):
+        return "Low"
+
     if route == "comms" and _is_google_form_create_intent(request):
         return "Low"
 
@@ -266,6 +269,14 @@ def _build_pending_plan(request: str, route: AgentRoute) -> PendingPlan:
             "[comms_agent/whatsapp] -> send message and return execution proof",
         ]
         tools = ["comms_agent", "send_whatsapp_message"]
+        estimated = "~3 actions, ~20 seconds"
+    elif route == "comms" and _is_google_sheet_create_intent(request):
+        steps = [
+            "[orchestrator] -> validate Google Sheets data-collection intent",
+            "[comms_agent/gsheets] -> collect launch data from live web sources",
+            "[comms_agent/gsheets] -> create Google Sheet and return shareable link",
+        ]
+        tools = ["comms_agent", "create_google_sheet_from_web_research"]
         estimated = "~3 actions, ~20 seconds"
     elif route == "comms" and _is_google_form_create_intent(request):
         steps = [
@@ -357,6 +368,9 @@ def _build_execution_summary(plan: PendingPlan, output: AgentOutput) -> str:
                     if key == "google_form":
                         field_count = len(value.get("fields") or [])
                         lines.append(f"- {key}: created successfully with {field_count} required field(s)")
+                    elif key == "google_sheet":
+                        row_count = int(value.get("records_written") or 0)
+                        lines.append(f"- {key}: created successfully with {row_count} row(s)")
                     elif key == "whatsapp":
                         action_count = len(value.get("actions") or [])
                         lines.append(f"- {key}: sent successfully with {action_count} execution step(s)")
@@ -437,11 +451,14 @@ def _rewrite_followup_for_local_open(message: str) -> str:
 
 def _is_local_open_intent(message: str) -> bool:
     normalized = _normalize_message(message)
-    action_words = ["open", "oepn", "opne", "play", "launch", "start"]
-    local_words = ["pc", "laptop", "local", "computer", "movie", "video", "from my", "drive", "disk", "vlc"]
-    has_action_and_local = any(word in normalized for word in action_words) and any(
-        word in normalized for word in local_words
+    action_phrase = re.search(
+        r"(?:^|[.!?]\s+)(?:please\s+|can\s+you\s+|could\s+you\s+|kindly\s+)?"
+        r"(?:open|oepn|opne|play|launch|start)\s+",
+        normalized,
     )
+    local_words = ["pc", "local", "computer", "from my", "drive", "disk", "vlc", "file", "folder"]
+    has_local_context = any(word in normalized for word in local_words)
+    has_action_and_local = bool(action_phrase) and has_local_context
 
     has_filename_hint = _is_filename_followup_message(message)
     return has_action_and_local or has_filename_hint
@@ -484,11 +501,60 @@ def _is_google_form_create_intent(message: str) -> bool:
     return has_form and has_create
 
 
+def _is_google_sheet_create_intent(message: str) -> bool:
+    normalized = _normalize_message(message)
+    has_sheet = any(
+        token in normalized
+        for token in ["google sheet", "google sheets", "spreadsheet", "spread sheet", "sheet", "sheets"]
+    )
+    has_create = any(
+        token in normalized
+        for token in ["create", "make", "build", "prepare", "generate", "bna", "banado", "bnado"]
+    )
+    has_data_task = any(token in normalized for token in ["data", "research", "web", "net", "internet"])
+    return has_sheet and (has_create or has_data_task)
+
+
+def _is_browser_first_intent(message: str) -> bool:
+    normalized = _normalize_message(message)
+    action_words = ["open", "search", "browse", "visit", "go to", "create", "fill", "click", "find"]
+    web_hints = [
+        "web",
+        "website",
+        "online",
+        "browser",
+        "internet",
+        "http",
+        ".com",
+        ".in",
+        "google",
+        "youtube",
+        "instagram",
+        "linkedin",
+        "twitter",
+        "x.com",
+    ]
+    local_hints = ["from my", "pc", "local", "drive", "disk", "folder", "file explorer", "desktop app"]
+
+    has_action = any(word in normalized for word in action_words)
+    has_web_signal = any(word in normalized for word in web_hints)
+    has_local_signal = any(word in normalized for word in local_hints)
+    return has_action and has_web_signal and not has_local_signal
+
+
 def route_intent(message: str) -> AgentRoute:
     text = message.lower()
 
-    if _is_whatsapp_send_intent(text) or _is_google_form_create_intent(text) or _is_email_send_intent(text):
+    if (
+        _is_whatsapp_send_intent(text)
+        or _is_google_form_create_intent(text)
+        or _is_google_sheet_create_intent(text)
+        or _is_email_send_intent(text)
+    ):
         return "comms"
+
+    if _is_browser_first_intent(text):
+        return "browser"
 
     if any(word in text for word in ["gmail", "slack", "discord", "outlook", "email", "message"]):
         return "comms"

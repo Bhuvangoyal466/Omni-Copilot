@@ -38,6 +38,7 @@ const defaultTools: ToolConnection[] = [
   { id: "gcal", label: "Google Calendar", connected: false, status: "disconnected" },
   { id: "gmeet", label: "Google Meet", connected: false, status: "disconnected" },
   { id: "gforms", label: "Google Forms", connected: false, status: "disconnected" },
+  { id: "gsheets", label: "Google Sheets", connected: false, status: "disconnected" },
   { id: "drive", label: "Google Drive", connected: false, status: "disconnected" },
   { id: "github", label: "GitHub", connected: false, status: "disconnected" },
   { id: "notion", label: "Notion", connected: false, status: "disconnected" },

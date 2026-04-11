@@ -12,7 +12,7 @@ Omni Copilot is a chat-first universal AI workspace that orchestrates your daily
 
 - Real-time chat with streaming responses
 - Agent activity timeline with step updates
-- Tool integrations hub (Gmail, Calendar, GitHub, Notion, Slack, Drive stubs)
+- Tool integrations hub (Gmail, Calendar, Sheets, GitHub, Notion, Slack, Drive stubs)
 - Command palette workflow (`Cmd+K`)
 - Memory viewer/editor
 - Action history with undo patterns
@@ -122,6 +122,7 @@ Register frontend callback URLs (frontend route forwards to backend callback aut
 	- `http://localhost:3000/api/integrations/gcal/callback`
 	- `http://localhost:3000/api/integrations/gmeet/callback`
 	- `http://localhost:3000/api/integrations/gforms/callback`
+	- `http://localhost:3000/api/integrations/gsheets/callback`
 	- `http://localhost:3000/api/integrations/drive/callback`
 - Slack:
 	- `http://localhost:3000/api/integrations/slack/callback`
@@ -140,6 +141,8 @@ Register frontend callback URLs (frontend route forwards to backend callback aut
 - `https://www.googleapis.com/auth/gmail.readonly`
 - `https://www.googleapis.com/auth/gmail.send`
 - `https://www.googleapis.com/auth/calendar`
+- `https://www.googleapis.com/auth/spreadsheets`
+- `https://www.googleapis.com/auth/drive.file`
 - `https://www.googleapis.com/auth/drive.readonly`
 - `https://www.googleapis.com/auth/forms.responses.readonly`
 - `https://www.googleapis.com/auth/forms.body`

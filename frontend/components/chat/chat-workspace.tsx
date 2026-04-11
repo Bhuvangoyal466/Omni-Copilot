@@ -199,7 +199,13 @@ export function ChatWorkspace({ chatId, initialPrompt = "" }: ChatWorkspaceProps
           <AI_Prompt
             disabled={isStreaming}
             placeholder="Ask Omni to search your tools, draft, plan, or execute actions"
-            onSubmit={(message) => sendMessage({ chatId, message })}
+            onSubmit={(message, options) =>
+              sendMessage({
+                chatId,
+                message,
+                voiceMode: Boolean(options?.voiceMode)
+              })
+            }
           />
         </div>
       </section>

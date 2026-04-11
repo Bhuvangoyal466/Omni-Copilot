@@ -1,6 +1,6 @@
 ﻿"use client";
 
-import { ArrowRight, Bot, Check, ChevronDown, Paperclip } from "lucide-react";
+import { ArrowRight, Bot, Check, ChevronDown, Mic, MicOff, Paperclip } from "lucide-react";
 import { useState, useRef, useCallback, useEffect } from "react";
 import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
@@ -14,7 +14,7 @@ import {
 import { motion, AnimatePresence } from "framer-motion";
 
 interface AIPromptProps {
-    onSubmit?: (message: string) => void;
+    onSubmit?: (message: string, options?: { voiceMode?: boolean }) => void;
     disabled?: boolean;
     placeholder?: string;
 }
@@ -22,6 +22,26 @@ interface AIPromptProps {
 interface UseAutoResizeTextareaProps {
     minHeight: number;
     maxHeight?: number;
+}
+
+interface SpeechRecognitionLike extends EventTarget {
+    lang: string;
+    interimResults: boolean;
+    continuous: boolean;
+    onresult: ((event: any) => void) | null;
+    onerror: ((event: any) => void) | null;
+    onend: (() => void) | null;
+    start: () => void;
+    stop: () => void;
+}
+
+type SpeechRecognitionCtor = new () => SpeechRecognitionLike;
+
+declare global {
+    interface Window {
+        SpeechRecognition?: SpeechRecognitionCtor;
+        webkitSpeechRecognition?: SpeechRecognitionCtor;
+    }
 }
 
 function useAutoResizeTextarea({
@@ -125,10 +145,16 @@ export function AI_Prompt({
     placeholder = "What can I do for you?",
 }: AIPromptProps) {
     const [value, setValue] = useState("");
+    const [isListening, setIsListening] = useState(false);
+    const [micError, setMicError] = useState<string | null>(null);
+    const [speechSupported, setSpeechSupported] = useState(false);
     const { textareaRef, adjustHeight } = useAutoResizeTextarea({
         minHeight: 72,
         maxHeight: 300,
     });
+    const recognitionRef = useRef<SpeechRecognitionLike | null>(null);
+    const finalTranscriptRef = useRef("");
+    const silenceTimerRef = useRef<number | null>(null);
     const [selectedModel, setSelectedModel] = useState("GPT-5.4 Mini");
 
     const AI_MODELS = [
@@ -147,15 +173,152 @@ export function AI_Prompt({
         "DeepSeek R1 Distill Llama 70B": GROQ_ICON,
     };
 
+    const clearSilenceTimer = useCallback(() => {
+        if (silenceTimerRef.current !== null) {
+            window.clearTimeout(silenceTimerRef.current);
+            silenceTimerRef.current = null;
+        }
+    }, []);
+
+    const stopListening = useCallback(() => {
+        if (recognitionRef.current) {
+            try {
+                recognitionRef.current.stop();
+            } catch {
+                // noop
+            }
+        }
+        clearSilenceTimer();
+        setIsListening(false);
+    }, [clearSilenceTimer]);
+
+    const submitMessage = useCallback(
+        (rawMessage: string, options?: { voiceMode?: boolean }) => {
+            const message = rawMessage.trim();
+            if (!message || disabled) {
+                return;
+            }
+            onSubmit?.(message, options);
+            setValue("");
+            finalTranscriptRef.current = "";
+            adjustHeight(true);
+        },
+        [adjustHeight, disabled, onSubmit]
+    );
+
     const submitValue = () => {
         const message = value.trim();
         if (!message || disabled) {
             return;
         }
-        onSubmit?.(message);
-        setValue("");
-        adjustHeight(true);
+
+        if (isListening) {
+            stopListening();
+        }
+
+        submitMessage(message);
     };
+
+    const queueVoiceSubmit = useCallback(
+        (draft: string) => {
+            clearSilenceTimer();
+            const message = draft.trim();
+            if (!message || disabled) {
+                return;
+            }
+
+            silenceTimerRef.current = window.setTimeout(() => {
+                stopListening();
+                submitMessage(message, { voiceMode: true });
+            }, 1200);
+        },
+        [clearSilenceTimer, disabled, stopListening, submitMessage]
+    );
+
+    const startListening = useCallback(() => {
+        if (!speechSupported || isListening || disabled) {
+            return;
+        }
+
+        const RecognitionCtor = window.SpeechRecognition || window.webkitSpeechRecognition;
+        if (!RecognitionCtor) {
+            setMicError("Speech recognition is not supported in this browser.");
+            return;
+        }
+
+        finalTranscriptRef.current = value.trim();
+        const recognition = new RecognitionCtor();
+        recognition.lang = "en-IN";
+        recognition.interimResults = true;
+        recognition.continuous = true;
+
+        recognition.onresult = (event: any) => {
+            let interim = "";
+            for (let i = event.resultIndex; i < event.results.length; i += 1) {
+                const phrase = String(event.results[i][0]?.transcript || "").trim();
+                if (!phrase) {
+                    continue;
+                }
+
+                if (event.results[i].isFinal) {
+                    finalTranscriptRef.current = `${finalTranscriptRef.current} ${phrase}`.trim();
+                } else {
+                    interim = `${interim} ${phrase}`.trim();
+                }
+            }
+
+            const combined = `${finalTranscriptRef.current} ${interim}`.trim();
+            setValue(combined);
+            adjustHeight();
+            queueVoiceSubmit(combined);
+        };
+
+        recognition.onerror = (event: any) => {
+            setMicError(`Mic error: ${event?.error || "unknown"}`);
+            setIsListening(false);
+            clearSilenceTimer();
+        };
+
+        recognition.onend = () => {
+            setIsListening(false);
+        };
+
+        recognitionRef.current = recognition;
+
+        try {
+            recognition.start();
+            setMicError(null);
+            setIsListening(true);
+            queueVoiceSubmit(value);
+        } catch (err) {
+            const message = err instanceof Error ? err.message : "Unable to start microphone";
+            setMicError(message);
+            setIsListening(false);
+        }
+    }, [adjustHeight, clearSilenceTimer, disabled, isListening, queueVoiceSubmit, speechSupported, value]);
+
+    useEffect(() => {
+        setSpeechSupported(Boolean(window.SpeechRecognition || window.webkitSpeechRecognition));
+    }, []);
+
+    useEffect(() => {
+        if (disabled && isListening) {
+            stopListening();
+        }
+    }, [disabled, isListening, stopListening]);
+
+    useEffect(() => {
+        return () => {
+            clearSilenceTimer();
+            if (recognitionRef.current) {
+                try {
+                    recognitionRef.current.stop();
+                } catch {
+                    // noop
+                }
+            }
+        };
+    }, [clearSilenceTimer]);
 
     const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
         if (e.key === "Enter" && !e.shiftKey && value.trim()) {
@@ -269,6 +432,19 @@ export function AI_Prompt({
                                         <input type="file" className="hidden" disabled={disabled} />
                                         <Paperclip className="w-4 h-4 transition-colors" />
                                     </label>
+                                    <button
+                                        type="button"
+                                        className={cn(
+                                            "rounded-lg p-2 bg-black/5 dark:bg-white/5",
+                                            "hover:bg-black/10 dark:hover:bg-white/10 focus-visible:ring-1 focus-visible:ring-offset-0 focus-visible:ring-blue-500",
+                                            isListening ? "text-cyan-600 dark:text-cyan-300" : "text-black/50 dark:text-white/55"
+                                        )}
+                                        aria-label={isListening ? "Stop voice input" : "Start voice input"}
+                                        onClick={isListening ? stopListening : startListening}
+                                        disabled={disabled || !speechSupported}
+                                    >
+                                        {isListening ? <MicOff className="h-4 w-4" /> : <Mic className="h-4 w-4" />}
+                                    </button>
                                 </div>
                                 <button
                                     type="button"
@@ -292,6 +468,7 @@ export function AI_Prompt({
                             </div>
                         </div>
                     </div>
+                    {micError && <p className="px-3 pt-2 text-xs text-rose-500 dark:text-rose-300">{micError}</p>}
                 </div>
             </div>
         </div>

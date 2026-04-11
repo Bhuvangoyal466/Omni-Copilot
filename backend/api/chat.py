@@ -58,7 +58,7 @@ async def stream_chat(
                 yield format_sse("status", status_event)
                 await asyncio.sleep(0.03)
 
-            token_delay = 0.006 if payload.voiceMode else 0.018
+            token_delay = 0.002 if payload.voiceMode else 0.014
             async for token_event in stream_text_tokens(state["answer"], delay=token_delay):
                 yield token_event
 

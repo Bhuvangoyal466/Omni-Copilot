@@ -112,17 +112,72 @@ function getRecognitionLocale(mode: VoiceLanguageMode): string {
   return "en-IN";
 }
 
+function splitSpeechChunks(text: string, maxChunkLength = 210): string[] {
+  const normalized = text.replace(/\s+/g, " ").trim();
+  if (!normalized) {
+    return [];
+  }
+
+  const sentenceParts = normalized.split(/(?<=[.!?])\s+/).filter(Boolean);
+  const chunks: string[] = [];
+  let current = "";
+
+  for (const part of sentenceParts) {
+    if (part.length > maxChunkLength) {
+      if (current) {
+        chunks.push(current.trim());
+        current = "";
+      }
+
+      for (let i = 0; i < part.length; i += maxChunkLength) {
+        chunks.push(part.slice(i, i + maxChunkLength).trim());
+      }
+      continue;
+    }
+
+    const merged = current ? `${current} ${part}` : part;
+    if (merged.length <= maxChunkLength) {
+      current = merged;
+    } else {
+      chunks.push(current.trim());
+      current = part;
+    }
+  }
+
+  if (current.trim()) {
+    chunks.push(current.trim());
+  }
+
+  return chunks;
+}
+
 function buildFallbackSpeech(text: string, language: "hi" | "en") {
   if (typeof window === "undefined" || !("speechSynthesis" in window)) {
     return;
   }
 
-  const utterance = new SpeechSynthesisUtterance(text);
-  utterance.lang = language === "hi" ? "hi-IN" : "en-US";
-  utterance.rate = 1.03;
-  utterance.pitch = 1;
+  const chunks = splitSpeechChunks(text);
+  if (chunks.length === 0) {
+    return;
+  }
+
+  const speakAt = (index: number) => {
+    if (index >= chunks.length) {
+      return;
+    }
+
+    const utterance = new SpeechSynthesisUtterance(chunks[index]);
+    utterance.lang = language === "hi" ? "hi-IN" : "en-US";
+    utterance.rate = 1.08;
+    utterance.pitch = 1;
+    utterance.onend = () => {
+      speakAt(index + 1);
+    };
+    window.speechSynthesis.speak(utterance);
+  };
+
   window.speechSynthesis.cancel();
-  window.speechSynthesis.speak(utterance);
+  speakAt(0);
 }
 
 export function OmniVoiceLauncher() {
@@ -206,7 +261,7 @@ export function OmniVoiceLauncher() {
         mode === "low-latency"
           ? window.setTimeout(() => {
               startFallback();
-            }, 700)
+            }, 350)
           : null;
 
       try {
@@ -331,8 +386,7 @@ export function OmniVoiceLauncher() {
               if (
                 playbackMode === "low-latency" &&
                 !previewSpeechStarted &&
-                assistantText.length >= 64 &&
-                /[.!?]/.test(assistantText)
+                (assistantText.length >= 28 || /[.!?]/.test(assistantText))
               ) {
                 buildFallbackSpeech(assistantText, commandLanguage);
                 previewSpeechStarted = true;
@@ -394,7 +448,7 @@ export function OmniVoiceLauncher() {
       silenceTimerRef.current = setTimeout(() => {
         stopListening();
         void runCommand(normalizedDraft);
-      }, 2000);
+      }, 1200);
     },
     [clearSilenceTimer, isRunning, runCommand, stopListening]
   );

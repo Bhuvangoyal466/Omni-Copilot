@@ -6,6 +6,7 @@ import { useAppStore } from "@/lib/store/app-store";
 interface SendMessageOptions {
   chatId: string;
   message: string;
+  voiceMode?: boolean;
 }
 
 type SseEvent = {
@@ -56,7 +57,7 @@ export function useChat(chatId: string) {
   const [error, setError] = useState<string | null>(null);
 
   const sendMessage = useCallback(
-    async ({ chatId: targetChatId, message }: SendMessageOptions) => {
+    async ({ chatId: targetChatId, message, voiceMode = false }: SendMessageOptions) => {
       if (!message.trim()) {
         return;
       }
@@ -79,7 +80,8 @@ export function useChat(chatId: string) {
           body: JSON.stringify({
             chatId: targetChatId,
             message,
-            model: selectedModel
+            model: selectedModel,
+            voiceMode
           })
         });
 

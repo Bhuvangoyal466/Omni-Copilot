@@ -6,6 +6,7 @@ from agents.types import AgentEvent, AgentOutput
 from tools.discord import search_discord_messages
 from tools.gforms import create_sample_google_form
 from tools.gmail import search_gmail_threads, send_gmail_message
+from tools.gsheets import create_google_sheet_from_web_research
 from tools.slack import search_slack_messages
 from tools.whatsapp import send_whatsapp_message
 
@@ -147,6 +148,21 @@ def _is_google_form_create_request(message: str) -> bool:
     return any(word in normalized for word in form_words) and any(word in normalized for word in create_words)
 
 
+def _is_google_sheet_create_request(message: str) -> bool:
+    normalized = _normalize(message)
+    sheet_words = ["google sheet", "google sheets", "spreadsheet", "spread sheet", "sheet", "sheets"]
+    create_words = ["create", "make", "build", "prepare", "generate", "bna", "banado", "bnado"]
+    share_words = ["share", "shared", "link", "online"]
+    data_words = ["data", "research", "web", "internet", "net"]
+
+    has_sheet = any(word in normalized for word in sheet_words)
+    has_create = any(word in normalized for word in create_words)
+    has_share = any(word in normalized for word in share_words)
+    has_data = any(word in normalized for word in data_words)
+
+    return has_sheet and (has_create or (has_share and has_data))
+
+
 def _extract_form_fields(message: str) -> list[str]:
     normalized = _normalize(message)
     fields: list[str] = []
@@ -180,6 +196,70 @@ class CommsAgent:
     name = "CommsAgent"
 
     async def run(self, user_message: str, *, user_id: str | None = None) -> AgentOutput:
+        if _is_google_sheet_create_request(user_message):
+            events: list[AgentEvent] = [
+                {"agent": self.name, "message": "Collecting web sources for Google Sheet", "status": "running"}
+            ]
+
+            if not (user_id or "").strip():
+                events.append(
+                    {
+                        "agent": self.name,
+                        "message": "Missing authenticated user for Google API access",
+                        "status": "failed",
+                    }
+                )
+                return {
+                    "answer": "Google Sheets creation requires a signed-in user. Please log in and connect Google first.",
+                    "events": events,
+                    "tool_results": {},
+                }
+
+            result = await create_google_sheet_from_web_research(
+                user_id=(user_id or "").strip(),
+                user_prompt=user_message,
+            )
+
+            if not result.get("ok"):
+                events.append(
+                    {
+                        "agent": self.name,
+                        "message": "Google Sheet creation failed",
+                        "status": "failed",
+                    }
+                )
+                return {
+                    "answer": f"Google Sheet create failed: {result.get('error', 'Unknown error')}",
+                    "events": events,
+                    "tool_results": {"google_sheet": result},
+                }
+
+            events.append(
+                {
+                    "agent": self.name,
+                    "message": "Google Sheet created with launch data",
+                    "status": "completed",
+                }
+            )
+
+            answer = (
+                "Google Sheet created successfully from live web sources.\n"
+                f"Topic: {result.get('topic')}\n"
+                f"Records: {result.get('records_written')}\n"
+                f"Sources: {result.get('sources_collected')}\n"
+                f"Sheet link: {result.get('sheet_url')}"
+            )
+
+            warnings = result.get("warnings")
+            if isinstance(warnings, list) and warnings:
+                answer += "\nNote: " + "; ".join(str(item) for item in warnings)
+
+            return {
+                "answer": answer,
+                "events": events,
+                "tool_results": {"google_sheet": result},
+            }
+
         if _is_whatsapp_send_request(user_message):
             events: list[AgentEvent] = [
                 {"agent": self.name, "message": "Starting WhatsApp live automation", "status": "running"}
