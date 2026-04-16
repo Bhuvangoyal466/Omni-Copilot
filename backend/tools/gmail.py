@@ -17,6 +17,20 @@ except Exception:  # pragma: no cover
     Fernet = None  # type: ignore[assignment]
 
 
+async def search_gmail_threads(query: str) -> list[dict[str, Any]]:
+    if not query.strip():
+        return []
+
+    return [
+        {
+            "id": "gmail-thread-1",
+            "subject": "Project sync follow-up",
+            "snippet": "Can you share an update before tomorrow?",
+            "from": "team@example.com",
+        }
+    ]
+
+
 def _normalize_user_id(value: str) -> str:
     raw = value.strip().lower()
     if len(raw) <= 64:
@@ -147,20 +161,6 @@ async def _gmail_send_raw(access_token: str, raw_message: str) -> httpx.Response
             headers={"Authorization": f"Bearer {access_token}", "Content-Type": "application/json"},
             json={"raw": raw_message},
         )
-
-
-async def search_gmail_threads(query: str) -> list[dict[str, Any]]:
-    if not query.strip():
-        return []
-
-    return [
-        {
-            "id": "gmail-thread-1",
-            "subject": "Project sync follow-up",
-            "snippet": "Can you share an update before tomorrow?",
-            "from": "team@example.com",
-        }
-    ]
 
 
 async def send_gmail_message(

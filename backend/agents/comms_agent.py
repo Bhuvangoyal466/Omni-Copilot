@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import re
 
@@ -48,7 +48,7 @@ def _extract_sender_and_recipient(message: str, user_id: str | None) -> tuple[st
         recipient = emails[1]
     if recipient is None and len(emails) == 1:
         recipient = emails[0]
-    if sender is None:
+    if sender is None and user_id and "@" in user_id:
         sender = user_id
 
     return sender, recipient
@@ -91,52 +91,12 @@ def _extract_whatsapp_payload(message: str) -> tuple[str | None, str | None]:
     message_text = quoted.group(1).strip() if quoted else None
 
     if not message_text:
-        message_patterns = [
-            r"\bsaying\s*(?::|-)?\s*(.+)$",
-            r"\bko\s+(?:message|msg|text)\s*(?:bhej(?:o|do)?|send|likho|write|type)?\s*(?::|-)?\s*(.+)$",
-            r"\b(?:message|msg|text)\s*(?:likho|write|type|send|bhej(?:o|do)?)\s*(?::|-)?\s*(.+)$",
-            r"\b(?:send|bhej(?:o|do)?)\s+(.+?)\s+\b(?:to|ko)\b",
-        ]
-        for pattern in message_patterns:
-            found = re.search(pattern, message, flags=re.IGNORECASE)
-            if not found:
-                continue
-
-            candidate = re.sub(r"\s+", " ", found.group(1)).strip(" .")
-            candidate = re.sub(r"\s+on\s+whatsapp$", "", candidate, flags=re.IGNORECASE).strip()
-            if candidate:
-                message_text = candidate
-                break
-
-    contact_patterns = [
-        r"(?:whatsapp\s+open\s+krke\s+)(.+?)(?:\s+naam\s+ka\s+contact|\s+contact)",
-        r"(?:contact\s+(?:named\s+|name\s+)?)(.+?)(?:\s+ko|\s+use|\s+message|$)",
-        r"(?:whatsapp\s+(?:par|pe)\s+)(.+?)(?:\s+ko|\s+message|\s+msg|\s+text|$)",
-        r"(?:to\s+)(.+?)(?:\s+on\s+whatsapp|\s+ko\s+message|\s+saying|\s+ko|\s+message|\s+msg|\s+text|$)",
-        r"(.+?)\s+ko\s+(?:message|msg|text|bhej|send|likho)",
-    ]
-
-    contact_name = None
-    for pattern in contact_patterns:
-        found = re.search(pattern, message, flags=re.IGNORECASE)
+        found = re.search(r"(?:send|bhej(?:o|do)?|message|msg|text)\s+(.+?)\s+(?:to|ko)\s+", message, flags=re.IGNORECASE)
         if found:
-            contact_name = found.group(1).strip()
-            break
+            message_text = re.sub(r"\s+", " ", found.group(1)).strip(" .")
 
-    if contact_name:
-        contact_name = re.sub(r"\s+", " ", contact_name).strip()
-        contact_name = re.sub(r"^whatsapp\s+(?:par|pe)\s+", "", contact_name, flags=re.IGNORECASE)
-        contact_name = re.sub(
-            r"\b(on\s+whatsapp|whatsapp|message|msg|text|ko|to|par|pe|send|bhej|likho|saying)\b.*$",
-            "",
-            contact_name,
-            flags=re.IGNORECASE,
-        ).strip(" ,.-")
-
-    if message_text:
-        message_text = re.sub(r"^(?:to\s+\w+\s+)?", "", message_text, flags=re.IGNORECASE).strip()
-        message_text = re.sub(r"^(?:message\s+|msg\s+|text\s+)", "", message_text, flags=re.IGNORECASE).strip()
-        message_text = re.sub(r"^(?:bhej(?:o|do)?\s+|send\s+|likho\s+)", "", message_text, flags=re.IGNORECASE).strip()
+    contact_match = re.search(r"(?:to|ko)\s+(.+?)(?:\s+on\s+whatsapp|\s+whatsapp|$)", message, flags=re.IGNORECASE)
+    contact_name = contact_match.group(1).strip(" ,.-") if contact_match else None
 
     return contact_name, message_text
 
@@ -146,6 +106,70 @@ def _is_google_form_create_request(message: str) -> bool:
     form_words = ["google form", "google forms", "form", "forms"]
     create_words = ["create", "make", "build", "bna", "banado", "generate"]
     return any(word in normalized for word in form_words) and any(word in normalized for word in create_words)
+
+
+def _extract_form_fields(message: str) -> list[str]:
+    normalized = _normalize(message)
+    fields: list[str] = []
+
+    count_match = re.search(r"(\d+)\s*fields?", normalized)
+    target_count = int(count_match.group(1)) if count_match else None
+
+    match = re.search(r"fields?\s*[-:]?\s*(.+)$", message, flags=re.IGNORECASE)
+    if match:
+        raw = match.group(1)
+        chunks = [chunk.strip() for chunk in re.split(r",| and | aur |\|", raw) if chunk.strip()]
+        expanded: list[str] = []
+        pair_tokens = {
+            "first name",
+            "last name",
+            "full name",
+            "phone number",
+            "favorite food",
+            "favourite food",
+        }
+
+        for chunk in chunks:
+            cleaned = re.sub(r"\s+", " ", chunk).strip(" .")
+            words = [w for w in cleaned.split(" ") if w]
+
+            if len(words) <= 1:
+                expanded.append(cleaned)
+                continue
+
+            i = 0
+            while i < len(words):
+                if i + 1 < len(words):
+                    pair = f"{words[i].lower()} {words[i + 1].lower()}"
+                    if pair in pair_tokens:
+                        expanded.append(pair)
+                        i += 2
+                        continue
+                expanded.append(words[i])
+                i += 1
+
+        for token in expanded:
+            token_clean = re.sub(r"\s+", " ", token).strip(" .")
+            if token_clean:
+                fields.append(token_clean.title())
+
+    if not fields:
+        if "name" in normalized:
+            fields.append("Name")
+        if "email" in normalized:
+            fields.append("Email")
+        if "phone" in normalized or "mobile" in normalized or "number" in normalized:
+            fields.append("Phone Number")
+
+    deduped: list[str] = []
+    for field in fields:
+        if field not in deduped:
+            deduped.append(field)
+
+    if target_count is not None and target_count > 0:
+        deduped = deduped[:target_count]
+
+    return deduped or ["Name", "Email", "Phone Number"]
 
 
 def _is_google_sheet_create_request(message: str) -> bool:
@@ -161,35 +185,6 @@ def _is_google_sheet_create_request(message: str) -> bool:
     has_data = any(word in normalized for word in data_words)
 
     return has_sheet and (has_create or (has_share and has_data))
-
-
-def _extract_form_fields(message: str) -> list[str]:
-    normalized = _normalize(message)
-    fields: list[str] = []
-
-    match = re.search(r"fields?\s+(.+)$", normalized)
-    if match:
-        raw = match.group(1)
-        chunks = re.split(r",| and | aur |\|", raw)
-        for chunk in chunks:
-            token = chunk.strip(" .")
-            if token:
-                fields.append(token.title())
-
-    if not fields:
-        if "name" in normalized:
-            fields.append("Name")
-        if "email" in normalized:
-            fields.append("Email")
-        if "phone" in normalized or "mobile" in normalized or "number" in normalized:
-            fields.append("Phone Number")
-
-    deduped: list[str] = []
-    for field in fields:
-        if field not in deduped:
-            deduped.append(field)
-
-    return deduped or ["Name", "Email", "Phone Number"]
 
 
 class CommsAgent:
@@ -277,7 +272,7 @@ class CommsAgent:
                 return {
                     "answer": (
                         "I could not parse WhatsApp contact name or quoted message text. "
-                        "Try: whatsapp open karke Nikhil CSE AI naam ka contact use message likho \"hello nikhil beta\""
+                        "Try: whatsapp open karke Nikhil naam ka contact use message likho \"hello\""
                     ),
                     "events": events,
                     "tool_results": {},
@@ -345,14 +340,8 @@ class CommsAgent:
                     }
                 )
 
-                error_text = str(result.get("error", "Unknown error"))
-                docs_link_match = re.search(r"https?://\S+", error_text)
-                docs_link = docs_link_match.group(0).rstrip(")") if docs_link_match else None
-                if docs_link:
-                    error_text += f"\nEnable it here: {docs_link}"
-
                 return {
-                    "answer": f"Google Form create failed: {error_text}",
+                    "answer": f"Google Form create failed: {result.get('error', 'Unknown error')}",
                     "events": events,
                     "tool_results": {"google_form": result},
                 }
@@ -409,7 +398,7 @@ class CommsAgent:
 
             subject, body = _build_email_content(user_message, sender)
             send_result = await send_gmail_message(
-                user_id=user_id or sender,
+                user_id=(user_id or sender),
                 from_email=sender,
                 to_email=recipient,
                 subject=subject,
@@ -482,3 +471,4 @@ class CommsAgent:
             "events": events,
             "tool_results": {"gmail": gmail_hits, "slack": slack_hits, "discord": discord_hits},
         }
+

@@ -1,8 +1,8 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
-import { AudioLines, Mic, MicOff, Sparkles, WandSparkles, X } from "lucide-react";
+import { AudioLines, Mic, MicOff, Send, Sparkles, X } from "lucide-react";
 
 import { createId } from "@/lib/utils";
 import { useAppStore } from "@/lib/store/app-store";
@@ -112,72 +112,17 @@ function getRecognitionLocale(mode: VoiceLanguageMode): string {
   return "en-IN";
 }
 
-function splitSpeechChunks(text: string, maxChunkLength = 210): string[] {
-  const normalized = text.replace(/\s+/g, " ").trim();
-  if (!normalized) {
-    return [];
-  }
-
-  const sentenceParts = normalized.split(/(?<=[.!?])\s+/).filter(Boolean);
-  const chunks: string[] = [];
-  let current = "";
-
-  for (const part of sentenceParts) {
-    if (part.length > maxChunkLength) {
-      if (current) {
-        chunks.push(current.trim());
-        current = "";
-      }
-
-      for (let i = 0; i < part.length; i += maxChunkLength) {
-        chunks.push(part.slice(i, i + maxChunkLength).trim());
-      }
-      continue;
-    }
-
-    const merged = current ? `${current} ${part}` : part;
-    if (merged.length <= maxChunkLength) {
-      current = merged;
-    } else {
-      chunks.push(current.trim());
-      current = part;
-    }
-  }
-
-  if (current.trim()) {
-    chunks.push(current.trim());
-  }
-
-  return chunks;
-}
-
 function buildFallbackSpeech(text: string, language: "hi" | "en") {
   if (typeof window === "undefined" || !("speechSynthesis" in window)) {
     return;
   }
 
-  const chunks = splitSpeechChunks(text);
-  if (chunks.length === 0) {
-    return;
-  }
-
-  const speakAt = (index: number) => {
-    if (index >= chunks.length) {
-      return;
-    }
-
-    const utterance = new SpeechSynthesisUtterance(chunks[index]);
-    utterance.lang = language === "hi" ? "hi-IN" : "en-US";
-    utterance.rate = 1.08;
-    utterance.pitch = 1;
-    utterance.onend = () => {
-      speakAt(index + 1);
-    };
-    window.speechSynthesis.speak(utterance);
-  };
-
+  const utterance = new SpeechSynthesisUtterance(text);
+  utterance.lang = language === "hi" ? "hi-IN" : "en-US";
+  utterance.rate = 1;
+  utterance.pitch = 1;
   window.speechSynthesis.cancel();
-  speakAt(0);
+  window.speechSynthesis.speak(utterance);
 }
 
 export function OmniVoiceLauncher() {
@@ -200,21 +145,34 @@ export function OmniVoiceLauncher() {
   const recognitionRef = useRef<SpeechRecognitionLike | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const finalTranscriptRef = useRef("");
-  const silenceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const listeningSupported = useMemo(
     () => typeof window !== "undefined" && Boolean(window.SpeechRecognition || window.webkitSpeechRecognition),
     []
   );
 
-  const clearSilenceTimer = useCallback(() => {
-    if (silenceTimerRef.current !== null) {
-      clearTimeout(silenceTimerRef.current);
-      silenceTimerRef.current = null;
-    }
-  }, []);
+  const openArena = () => {
+    setError(null);
+    setIsEntering(true);
+    window.setTimeout(() => {
+      setIsEntering(false);
+      setIsArenaOpen(true);
+    }, 2000);
+  };
 
-  const addStep = useCallback((agent: string, message: string, status: "running" | "completed" | "failed") => {
+  const closeArena = () => {
+    if (recognitionRef.current && isListening) {
+      try {
+        recognitionRef.current.stop();
+      } catch {
+        // noop
+      }
+    }
+    setIsListening(false);
+    setIsArenaOpen(false);
+  };
+
+  const addStep = (agent: string, message: string, status: "running" | "completed" | "failed") => {
     setSteps((prev) => [
       ...prev,
       {
@@ -224,237 +182,174 @@ export function OmniVoiceLauncher() {
         status
       }
     ]);
+  };
+
+  const playTts = useCallback(async (
+    text: string,
+    sourceCommand: string,
+    languageMode: VoiceLanguageMode,
+    gender: VoiceGender,
+    mode: VoicePlaybackMode
+  ) => {
+    const lang = resolveReplyLanguage(sourceCommand || text, languageMode);
+    let fallbackStarted = false;
+
+    const startFallback = () => {
+      if (fallbackStarted) {
+        return;
+      }
+      fallbackStarted = true;
+      buildFallbackSpeech(text, lang);
+    };
+
+    const fallbackTimer =
+      mode === "low-latency"
+        ? window.setTimeout(() => {
+            startFallback();
+          }, 900)
+        : null;
+
+    try {
+      const response = await fetch("/api/voice/tts", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text, language: lang, voiceGender: gender })
+      });
+
+      if (fallbackTimer !== null) {
+        window.clearTimeout(fallbackTimer);
+      }
+
+      if (fallbackStarted) {
+        return;
+      }
+
+      if (!response.ok) {
+        startFallback();
+        return;
+      }
+
+      const payload = (await response.json()) as TtsResponse;
+      if (!payload.ok || !payload.audioBase64 || !payload.mimeType) {
+        startFallback();
+        return;
+      }
+
+      const src = `data:${payload.mimeType};base64,${payload.audioBase64}`;
+      if (audioRef.current) {
+        audioRef.current.pause();
+        audioRef.current = null;
+      }
+
+      const audio = new Audio(src);
+      audioRef.current = audio;
+      await audio.play();
+    } catch {
+      if (fallbackTimer !== null) {
+        window.clearTimeout(fallbackTimer);
+      }
+      startFallback();
+    }
   }, []);
 
-  const stopListening = useCallback(() => {
-    if (recognitionRef.current) {
-      try {
-        recognitionRef.current.stop();
-      } catch {
-        // noop
-      }
+  const runCommand = useCallback(async () => {
+    const command = commandDraft.trim();
+    if (!command || isRunning) {
+      return;
     }
-    clearSilenceTimer();
-    setIsListening(false);
-  }, [clearSilenceTimer]);
 
-  const playTts = useCallback(
-    async (
-      text: string,
-      sourceCommand: string,
-      languageMode: VoiceLanguageMode,
-      gender: VoiceGender,
-      mode: VoicePlaybackMode
-    ) => {
-      const lang = resolveReplyLanguage(sourceCommand || text, languageMode);
-      let fallbackStarted = false;
+    setError(null);
+    setIsRunning(true);
+    setAssistantResponse("");
+    setSteps([]);
+    setLastCommand(command);
 
-      const startFallback = () => {
-        if (fallbackStarted) {
-          return;
-        }
-        fallbackStarted = true;
-        buildFallbackSpeech(text, lang);
-      };
+    addStep("VoiceArena", "Sending command to Omni", "running");
 
-      const fallbackTimer =
-        mode === "low-latency"
-          ? window.setTimeout(() => {
-              startFallback();
-            }, 350)
-          : null;
-
-      try {
-        const response = await fetch("/api/voice/tts", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ text, language: lang, voiceGender: gender })
-        });
-
-        if (fallbackTimer !== null) {
-          window.clearTimeout(fallbackTimer);
-        }
-
-        if (fallbackStarted) {
-          return;
-        }
-
-        if (!response.ok) {
-          startFallback();
-          return;
-        }
-
-        const payload = (await response.json()) as TtsResponse;
-        if (!payload.ok || !payload.audioBase64 || !payload.mimeType) {
-          startFallback();
-          return;
-        }
-
-        const src = `data:${payload.mimeType};base64,${payload.audioBase64}`;
-        if (audioRef.current) {
-          audioRef.current.pause();
-          audioRef.current = null;
-        }
-
-        const audio = new Audio(src);
-        audioRef.current = audio;
-        await audio.play();
-      } catch {
-        if (fallbackTimer !== null) {
-          window.clearTimeout(fallbackTimer);
-        }
-        startFallback();
-      }
-    },
-    []
-  );
-
-  const runCommand = useCallback(
-    async (incomingCommand?: string) => {
-      const command = (incomingCommand ?? commandDraft).trim();
-      if (!command || isRunning) {
-        return;
-      }
-
-      clearSilenceTimer();
-      setError(null);
-      setIsRunning(true);
-      setAssistantResponse("");
-      setSteps([]);
-      setLastCommand(command);
-      setCommandDraft(command);
-
-      addStep("VoiceArena", "Voice command captured. Executing automatically.", "running");
-
+    try {
       const commandLanguage = resolveReplyLanguage(command, voiceLanguageMode);
+      const languageHint =
+        commandLanguage === "hi"
+          ? "Reply strictly in Hindi."
+          : "Reply strictly in English.";
 
-      try {
-        const languageHint = commandLanguage === "hi" ? "Reply strictly in Hindi." : "Reply strictly in English.";
+      const response = await fetch("/api/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          chatId: chatIdRef.current,
+          message: `${command}\n\n${languageHint}`,
+          model: selectedModel
+        })
+      });
 
-        const response = await fetch("/api/chat", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            chatId: chatIdRef.current,
-            message: `${command}\n\n${languageHint}`,
-            model: selectedModel,
-            voiceMode: true
-          })
-        });
-
-        if (!response.ok || !response.body) {
-          let messageText = `Voice command failed (${response.status})`;
-          try {
-            const payload = (await response.json()) as { error?: string };
-            if (payload?.error) {
-              messageText = payload.error;
-            }
-          } catch {
-            // noop
+      if (!response.ok || !response.body) {
+        let messageText = `Voice command failed (${response.status})`;
+        try {
+          const payload = (await response.json()) as { error?: string };
+          if (payload?.error) {
+            messageText = payload.error;
           }
-          throw new Error(messageText);
+        } catch {
+          // noop
         }
-
-        const reader = response.body.getReader();
-        const decoder = new TextDecoder();
-        let buffer = "";
-        let assistantText = "";
-        let previewSpeechStarted = false;
-
-        while (true) {
-          const { value, done } = await reader.read();
-          if (done) {
-            break;
-          }
-
-          buffer += decoder.decode(value, { stream: true });
-          const boundary = buffer.lastIndexOf("\n\n");
-          if (boundary === -1) {
-            continue;
-          }
-
-          const packetText = buffer.slice(0, boundary);
-          buffer = buffer.slice(boundary + 2);
-
-          const events = parseSseChunk(packetText);
-          for (const evt of events) {
-            if (evt.event === "token") {
-              const token = typeof evt.data === "string" ? evt.data : "";
-              assistantText += token;
-              setAssistantResponse(assistantText);
-
-              if (
-                playbackMode === "low-latency" &&
-                !previewSpeechStarted &&
-                (assistantText.length >= 28 || /[.!?]/.test(assistantText))
-              ) {
-                buildFallbackSpeech(assistantText, commandLanguage);
-                previewSpeechStarted = true;
-              }
-            }
-
-            if (evt.event === "status" && typeof evt.data === "object" && evt.data !== null) {
-              const data = evt.data as {
-                agent?: string;
-                message?: string;
-                status?: "running" | "completed" | "failed";
-              };
-              if (data.agent && data.message && data.status) {
-                addStep(data.agent, data.message, data.status);
-              }
-            }
-
-            if (evt.event === "error") {
-              const errText = typeof evt.data === "string" ? evt.data : "Unknown voice stream error";
-              throw new Error(errText);
-            }
-          }
-        }
-
-        if (assistantText.trim()) {
-          if (playbackMode === "studio" || !previewSpeechStarted) {
-            await playTts(assistantText, command, voiceLanguageMode, voiceGender, playbackMode);
-          }
-        }
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : "Unknown voice execution error";
-        setError(msg);
-        addStep("VoiceArena", msg, "failed");
-      } finally {
-        setIsRunning(false);
-      }
-    },
-    [
-      addStep,
-      clearSilenceTimer,
-      commandDraft,
-      isRunning,
-      playbackMode,
-      playTts,
-      selectedModel,
-      voiceGender,
-      voiceLanguageMode
-    ]
-  );
-
-  const queueAutoRunAfterSilence = useCallback(
-    (draft: string) => {
-      clearSilenceTimer();
-      const normalizedDraft = draft.trim();
-      if (!normalizedDraft || isRunning) {
-        return;
+        throw new Error(messageText);
       }
 
-      silenceTimerRef.current = setTimeout(() => {
-        stopListening();
-        void runCommand(normalizedDraft);
-      }, 1200);
-    },
-    [clearSilenceTimer, isRunning, runCommand, stopListening]
-  );
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+      let assistantText = "";
 
-  const startListening = useCallback(() => {
-    if (!listeningSupported || isListening || isRunning) {
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) {
+          break;
+        }
+
+        buffer += decoder.decode(value, { stream: true });
+        const boundary = buffer.lastIndexOf("\n\n");
+        if (boundary === -1) {
+          continue;
+        }
+
+        const packetText = buffer.slice(0, boundary);
+        buffer = buffer.slice(boundary + 2);
+
+        const events = parseSseChunk(packetText);
+        for (const evt of events) {
+          if (evt.event === "token") {
+            const token = typeof evt.data === "string" ? evt.data : "";
+            assistantText += token;
+            setAssistantResponse(assistantText);
+          }
+
+          if (evt.event === "status" && typeof evt.data === "object" && evt.data !== null) {
+            const data = evt.data as { agent?: string; message?: string; status?: "running" | "completed" | "failed" };
+            if (data.agent && data.message && data.status) {
+              addStep(data.agent, data.message, data.status);
+            }
+          }
+
+          if (evt.event === "error") {
+            const errText = typeof evt.data === "string" ? evt.data : "Unknown voice stream error";
+            throw new Error(errText);
+          }
+        }
+      }
+
+      await playTts(assistantText, command, voiceLanguageMode, voiceGender, playbackMode);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Unknown voice execution error";
+      setError(msg);
+      addStep("VoiceArena", msg, "failed");
+    } finally {
+      setIsRunning(false);
+    }
+  }, [commandDraft, isRunning, playbackMode, playTts, selectedModel, voiceGender, voiceLanguageMode]);
+
+  const startListening = () => {
+    if (!listeningSupported || isListening) {
       return;
     }
 
@@ -485,14 +380,11 @@ export function OmniVoiceLauncher() {
         }
       }
 
-      const combined = `${finalTranscriptRef.current} ${interim}`.trim();
-      setCommandDraft(combined);
-      queueAutoRunAfterSilence(combined);
+      setCommandDraft(`${finalTranscriptRef.current} ${interim}`.trim());
     };
 
     recognition.onerror = (event: any) => {
       setError(`Mic error: ${event?.error || "unknown"}`);
-      clearSilenceTimer();
       setIsListening(false);
     };
 
@@ -506,96 +398,62 @@ export function OmniVoiceLauncher() {
       recognition.start();
       setIsListening(true);
       setError(null);
-      queueAutoRunAfterSilence(commandDraft);
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Unable to start microphone";
       setError(msg);
       setIsListening(false);
     }
-  }, [
-    clearSilenceTimer,
-    commandDraft,
-    isListening,
-    isRunning,
-    listeningSupported,
-    queueAutoRunAfterSilence,
-    voiceLanguageMode
-  ]);
-
-  const openArena = () => {
-    setError(null);
-    setIsEntering(true);
-    window.setTimeout(() => {
-      setIsEntering(false);
-      setIsArenaOpen(true);
-    }, 2000);
   };
 
-  const closeArena = () => {
-    stopListening();
-    if (audioRef.current) {
-      audioRef.current.pause();
-      audioRef.current = null;
+  const stopListening = () => {
+    if (!recognitionRef.current) {
+      return;
     }
-    if (typeof window !== "undefined" && "speechSynthesis" in window) {
-      window.speechSynthesis.cancel();
+    try {
+      recognitionRef.current.stop();
+    } catch {
+      // noop
     }
-    setIsArenaOpen(false);
+    setIsListening(false);
   };
-
-  useEffect(() => {
-    return () => {
-      clearSilenceTimer();
-      if (audioRef.current) {
-        audioRef.current.pause();
-      }
-    };
-  }, [clearSilenceTimer]);
-
-  const statusLabel = isRunning ? "Executing" : isListening ? "Listening" : "Idle";
-  const transcriptChars = commandDraft.trim().length;
-  const responseChars = assistantResponse.trim().length;
 
   return (
     <>
       <motion.button
         onClick={openArena}
-        className="fixed bottom-6 right-6 z-[70] rounded-full border border-amber-100/40 bg-[linear-gradient(140deg,#fef3c7_0%,#2dd4bf_35%,#0f172a_100%)] p-[2px] shadow-[0_20px_80px_rgba(15,118,110,0.48)]"
-        whileHover={{ scale: 1.06, rotate: 1.5 }}
-        whileTap={{ scale: 0.95 }}
+        className="fixed bottom-6 right-6 z-[70] overflow-hidden rounded-full border border-cyan-300/30 bg-gradient-to-br from-cyan-300 via-cyan-400 to-blue-500 px-5 py-3 text-xs font-semibold tracking-[0.16em] text-black shadow-2xl shadow-cyan-900/50"
+        whileHover={{ scale: 1.06 }}
+        whileTap={{ scale: 0.96 }}
       >
-        <span className="relative flex h-16 w-16 items-center justify-center rounded-full bg-slate-950 text-[10px] font-black tracking-[0.2em] text-amber-100">
-          <motion.span
-            className="pointer-events-none absolute inset-1 rounded-full border border-amber-200/35"
-            animate={{ scale: [1, 1.09, 1], opacity: [0.5, 0.2, 0.5] }}
-            transition={{ duration: 1.45, repeat: Number.POSITIVE_INFINITY }}
-          />
-          VOICE
-        </span>
+        <span className="relative z-10">OMNI VOICE</span>
+        <motion.span
+          className="absolute inset-0 bg-white/35"
+          animate={{ opacity: [0.15, 0.35, 0.15] }}
+          transition={{ duration: 1.8, repeat: Number.POSITIVE_INFINITY }}
+        />
       </motion.button>
 
       <AnimatePresence>
         {isEntering && (
           <motion.div
-            className="fixed inset-0 z-[75] grid place-items-center bg-slate-950/95"
+            className="fixed inset-0 z-[75] grid place-items-center bg-black/85"
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
           >
             <motion.div
-              initial={{ scale: 0.74, opacity: 0 }}
+              initial={{ scale: 0.72, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
-              exit={{ scale: 1.15, opacity: 0 }}
-              className="w-[min(92vw,520px)] rounded-[2rem] border border-amber-200/30 bg-[linear-gradient(170deg,rgba(2,6,23,0.95),rgba(15,23,42,0.92))] p-10 text-center shadow-[0_0_120px_rgba(45,212,191,0.24)]"
+              exit={{ scale: 1.2, opacity: 0 }}
+              transition={{ duration: 0.6 }}
+              className="rounded-3xl border border-cyan-300/25 bg-black/65 p-10 text-center shadow-2xl shadow-cyan-900/40"
             >
               <motion.div
-                className="mx-auto mb-4 grid h-20 w-20 place-items-center rounded-full border border-amber-200/45"
+                className="mx-auto mb-4 h-20 w-20 rounded-full border border-cyan-300/35"
                 animate={{ rotate: 360 }}
                 transition={{ duration: 2, repeat: Number.POSITIVE_INFINITY, ease: "linear" }}
-              >
-                <Sparkles className="h-6 w-6 text-amber-100" />
-              </motion.div>
-              <p className="text-sm uppercase tracking-[0.24em] text-amber-100">Initializing Command Arena</p>
+              />
+              <p className="text-sm uppercase tracking-[0.3em] text-cyan-200">Entering Voice Arena</p>
             </motion.div>
           </motion.div>
         )}
@@ -604,222 +462,164 @@ export function OmniVoiceLauncher() {
       <AnimatePresence>
         {isArenaOpen && (
           <motion.section
-            className="fixed inset-0 z-[80] overflow-hidden bg-slate-950"
-            initial={{ opacity: 0, scale: 0.985 }}
+            className="fixed inset-0 z-[80] overflow-hidden bg-[radial-gradient(circle_at_top,_#0e2438,_#04070d_55%)]"
+            initial={{ opacity: 0, scale: 0.98 }}
             animate={{ opacity: 1, scale: 1 }}
-            exit={{ opacity: 0, scale: 1.015 }}
-            transition={{ duration: 0.28 }}
+            exit={{ opacity: 0, scale: 1.02 }}
+            transition={{ duration: 0.35 }}
           >
-            <div className="absolute inset-0 [background:radial-gradient(circle_at_14%_10%,rgba(251,191,36,0.24),transparent_42%),radial-gradient(circle_at_78%_15%,rgba(45,212,191,0.22),transparent_38%),radial-gradient(circle_at_68%_84%,rgba(56,189,248,0.16),transparent_42%)]" />
-            <div className="absolute inset-0 opacity-20 [background-image:linear-gradient(rgba(250,204,21,0.16)_1px,transparent_1px),linear-gradient(90deg,rgba(45,212,191,0.16)_1px,transparent_1px)] [background-size:48px_48px]" />
-            <div className="pointer-events-none absolute inset-0">
-              {Array.from({ length: 14 }).map((_, index) => (
-                <motion.span
-                  key={`spark-${index}`}
-                  className="absolute h-1.5 w-1.5 rounded-full bg-amber-200/80"
-                  style={{
-                    left: `${8 + (index * 6.5) % 88}%`,
-                    top: `${10 + (index * 11) % 76}%`
-                  }}
-                  animate={{
-                    y: [0, -16 - (index % 4) * 6, 0],
-                    opacity: [0.14, 0.9, 0.14],
-                    scale: [0.6, 1.1, 0.6]
-                  }}
-                  transition={{
-                    duration: 2.2 + (index % 3) * 0.55,
-                    delay: index * 0.09,
-                    repeat: Number.POSITIVE_INFINITY
-                  }}
-                />
-              ))}
-            </div>
-
-            <div className="relative z-10 mx-auto flex h-full w-full max-w-[1440px] flex-col px-4 py-4 sm:px-6 sm:py-6">
-              <header className="flex flex-wrap items-center justify-between gap-3 rounded-3xl border border-amber-100/20 bg-slate-900/65 px-4 py-3 backdrop-blur-xl">
+            <div className="absolute inset-0 opacity-40 [background:radial-gradient(circle_at_30%_20%,rgba(0,255,255,0.24),transparent_40%),radial-gradient(circle_at_70%_70%,rgba(0,140,255,0.28),transparent_42%)]" />
+            <div className="relative z-10 flex h-full flex-col p-4 sm:p-8">
+              <header className="mb-6 flex items-center justify-between">
                 <div>
-                  <p className="text-[11px] uppercase tracking-[0.22em] text-amber-200/85">Voice Arena 21</p>
-                  <h2 className="bg-gradient-to-r from-amber-100 via-teal-100 to-sky-200 bg-clip-text text-2xl font-semibold text-transparent">
-                    Omni Neural Command Deck
-                  </h2>
-                  <p className="text-xs text-teal-100/75">No Run button. Silence for 2s and execution starts automatically.</p>
+                  <p className="text-xs uppercase tracking-[0.18em] text-cyan-200/75">Voice Arena</p>
+                  <h2 className="text-xl font-semibold text-cyan-100">OMNI Jarvis Console</h2>
                 </div>
 
-                <div className="flex items-center gap-2">
-                  <span className="rounded-full border border-amber-200/30 bg-amber-200/10 px-3 py-1 text-[11px] uppercase tracking-[0.12em] text-amber-100">
-                    {statusLabel}
-                  </span>
-                  <span className="rounded-full border border-teal-200/25 bg-teal-500/10 px-3 py-1 text-[10px] uppercase tracking-[0.11em] text-teal-100/90">
-                    Steps {steps.length}
-                  </span>
-                  <span className="rounded-full border border-sky-200/25 bg-sky-500/10 px-3 py-1 text-[10px] uppercase tracking-[0.11em] text-sky-100/90">
-                    TX {transcriptChars} / RX {responseChars}
-                  </span>
-                  <button
-                    onClick={closeArena}
-                    className="rounded-xl border border-teal-100/25 bg-teal-500/10 p-2 text-teal-50 transition hover:bg-teal-500/20"
-                    aria-label="Close Voice Arena"
-                  >
-                    <X className="h-4 w-4" />
-                  </button>
-                </div>
+                <button
+                  onClick={closeArena}
+                  className="rounded-xl border border-cyan-200/20 bg-cyan-500/10 p-2 text-cyan-100 hover:bg-cyan-500/20"
+                  aria-label="Close Voice Arena"
+                >
+                  <X className="h-4 w-4" />
+                </button>
               </header>
 
-              <div className="mt-4 grid flex-1 gap-4 xl:grid-cols-[1.45fr_1fr]">
-                <section className="rounded-[2rem] border border-amber-100/20 bg-slate-900/70 p-4 shadow-[0_0_90px_rgba(20,184,166,0.2)] backdrop-blur-xl sm:p-6">
-                  <div className="grid gap-5 lg:grid-cols-[320px_1fr]">
-                    <div className="rounded-3xl border border-teal-100/20 bg-slate-950/60 p-4">
-                      <div className="relative mx-auto mb-3 grid h-56 w-56 place-items-center">
-                        <motion.div
-                          className="absolute inset-0 rounded-full border border-amber-200/30"
-                          animate={{ rotate: 360 }}
-                          transition={{ duration: 12, repeat: Number.POSITIVE_INFINITY, ease: "linear" }}
-                        />
-                        <motion.div
-                          className="absolute inset-5 rounded-full border border-teal-200/25"
-                          animate={{ rotate: -360 }}
-                          transition={{ duration: 9, repeat: Number.POSITIVE_INFINITY, ease: "linear" }}
-                        />
-                        <motion.div
-                          className="absolute inset-[3.1rem] rounded-full bg-[radial-gradient(circle,#14b8a6_0%,#0f172a_68%)]"
-                          animate={{ boxShadow: isListening ? ["0 0 30px #2dd4bf", "0 0 90px #fbbf24", "0 0 30px #2dd4bf"] : ["0 0 20px #155e75", "0 0 28px #155e75", "0 0 20px #155e75"] }}
-                          transition={{ duration: 1.45, repeat: Number.POSITIVE_INFINITY }}
-                        />
-                        <Sparkles className="relative z-10 h-9 w-9 text-amber-100" />
-                      </div>
-
-                      <div className="grid grid-cols-10 gap-1">
-                        {Array.from({ length: 20 }).map((_, index) => (
-                          <motion.span
-                            key={`bar-${index}`}
-                            className="h-2 rounded-full bg-teal-300/80"
-                            animate={{ opacity: isListening ? [0.25, 1, 0.25] : [0.22, 0.34, 0.22], scaleY: isListening ? [0.6, 1.4, 0.6] : [0.5, 0.8, 0.5] }}
-                            transition={{ duration: 0.9, repeat: Number.POSITIVE_INFINITY, delay: index * 0.03 }}
-                          />
-                        ))}
-                      </div>
-
-                      <p className="mt-3 text-xs text-teal-100/75">
-                        {isRunning ? "Agents executing your command..." : isListening ? "Listening in real-time. Pause to auto-trigger." : "Mic standby."}
-                      </p>
-                    </div>
-
-                    <div className="space-y-4">
-                      <div className="grid gap-3 sm:grid-cols-2">
-                        <button
-                          onClick={isListening ? stopListening : startListening}
-                          disabled={!listeningSupported || isRunning}
-                          className="inline-flex items-center justify-center gap-2 rounded-xl bg-amber-300 px-4 py-2.5 text-sm font-semibold text-black transition hover:bg-amber-200 disabled:opacity-60"
-                        >
-                          {isListening ? <MicOff className="h-4 w-4" /> : <Mic className="h-4 w-4" />}
-                          {isListening ? "Stop Listening" : "Start Listening"}
-                        </button>
-
-                        <button
-                          onClick={() => {
-                            clearSilenceTimer();
-                            setCommandDraft("");
-                            finalTranscriptRef.current = "";
-                          }}
-                          disabled={isRunning}
-                          className="rounded-xl border border-teal-200/20 bg-teal-500/10 px-4 py-2.5 text-sm text-teal-50 transition hover:bg-teal-500/20"
-                        >
-                          Clear Draft
-                        </button>
-                      </div>
-
-                      <div className="grid gap-3 sm:grid-cols-3">
-                        <label className="rounded-xl border border-teal-200/20 bg-slate-950/50 p-2 text-xs text-teal-100/90">
-                          <span className="mb-1 block uppercase tracking-[0.12em] text-teal-100/70">Reply Language</span>
-                          <select
-                            value={voiceLanguageMode}
-                            onChange={(event) => setVoiceLanguageMode(event.target.value as VoiceLanguageMode)}
-                            className="w-full rounded-lg border border-teal-200/20 bg-slate-950/70 px-2 py-1 text-xs text-teal-50"
-                          >
-                            <option value="auto">Auto</option>
-                            <option value="english">English</option>
-                            <option value="hindi">Hindi</option>
-                          </select>
-                        </label>
-
-                        <label className="rounded-xl border border-teal-200/20 bg-slate-950/50 p-2 text-xs text-teal-100/90">
-                          <span className="mb-1 block uppercase tracking-[0.12em] text-teal-100/70">Voice</span>
-                          <select
-                            value={voiceGender}
-                            onChange={(event) => setVoiceGender(event.target.value as VoiceGender)}
-                            className="w-full rounded-lg border border-teal-200/20 bg-slate-950/70 px-2 py-1 text-xs text-teal-50"
-                          >
-                            <option value="female">Female</option>
-                            <option value="male">Male</option>
-                          </select>
-                        </label>
-
-                        <label className="rounded-xl border border-teal-200/20 bg-slate-950/50 p-2 text-xs text-teal-100/90">
-                          <span className="mb-1 block uppercase tracking-[0.12em] text-teal-100/70">Speech Mode</span>
-                          <select
-                            value={playbackMode}
-                            onChange={(event) => setPlaybackMode(event.target.value as VoicePlaybackMode)}
-                            className="w-full rounded-lg border border-teal-200/20 bg-slate-950/70 px-2 py-1 text-xs text-teal-50"
-                          >
-                            <option value="low-latency">Instant</option>
-                            <option value="studio">Studio (Groq)</option>
-                          </select>
-                        </label>
-                      </div>
-
-                      <div className="grid gap-3 lg:grid-cols-2">
-                        <div className="rounded-2xl border border-amber-200/20 bg-slate-950/55 p-3">
-                          <p className="text-[11px] uppercase tracking-[0.14em] text-amber-200/75">Live Transcript</p>
-                          <p className="mt-2 min-h-20 text-sm leading-relaxed text-amber-50/95">
-                            {commandDraft || "Bolo naturally... 2 second pause ke baad auto-execution start hoga."}
-                          </p>
-                        </div>
-
-                        <div className="rounded-2xl border border-teal-200/20 bg-slate-950/55 p-3">
-                          <p className="text-[11px] uppercase tracking-[0.14em] text-teal-200/75">Omni Reply Stream</p>
-                          <p className="mt-2 min-h-20 text-sm leading-relaxed text-teal-50/95">
-                            {assistantResponse || "Response yahin stream hoga aur auto-speak trigger hoga."}
-                          </p>
-                        </div>
-                      </div>
-                    </div>
+              <div className="grid flex-1 gap-4 lg:grid-cols-[1.2fr_1fr]">
+                <div className="rounded-3xl border border-cyan-200/20 bg-black/35 p-4 backdrop-blur-xl sm:p-6">
+                  <div className="mb-5 flex items-center justify-center">
+                    <motion.div
+                      className="relative grid h-44 w-44 place-items-center rounded-full border border-cyan-300/25 bg-cyan-500/10"
+                      animate={{ boxShadow: isListening ? ["0 0 20px #0ff", "0 0 48px #0ff", "0 0 20px #0ff"] : "0 0 18px #0aa" }}
+                      transition={{ duration: 1.2, repeat: Number.POSITIVE_INFINITY }}
+                    >
+                      <motion.div
+                        className="absolute inset-2 rounded-full border border-cyan-300/30"
+                        animate={{ rotate: 360 }}
+                        transition={{ duration: 8, repeat: Number.POSITIVE_INFINITY, ease: "linear" }}
+                      />
+                      <Sparkles className="h-8 w-8 text-cyan-200" />
+                    </motion.div>
                   </div>
-                </section>
 
-                <aside className="rounded-[2rem] border border-teal-100/20 bg-slate-900/70 p-4 backdrop-blur-xl sm:p-6">
-                  <div className="mb-3 flex items-center gap-2 text-teal-100">
+                  <div className="grid gap-3 sm:grid-cols-3">
+                    <button
+                      onClick={isListening ? stopListening : startListening}
+                      disabled={!listeningSupported || isRunning}
+                      className="inline-flex items-center justify-center gap-2 rounded-xl bg-cyan-400 px-3 py-2 text-sm font-medium text-black transition hover:bg-cyan-300 disabled:opacity-60"
+                    >
+                      {isListening ? <MicOff className="h-4 w-4" /> : <Mic className="h-4 w-4" />}
+                      {isListening ? "Stop Mic" : "Start Mic"}
+                    </button>
+
+                    <button
+                      onClick={() => {
+                        setCommandDraft("");
+                        finalTranscriptRef.current = "";
+                      }}
+                      disabled={isRunning}
+                      className="rounded-xl border border-cyan-200/25 bg-cyan-500/10 px-3 py-2 text-sm text-cyan-100 transition hover:bg-cyan-500/20"
+                    >
+                      Clear
+                    </button>
+
+                    <button
+                      onClick={() => {
+                        stopListening();
+                        void runCommand();
+                      }}
+                      disabled={isRunning || !commandDraft.trim()}
+                      className="inline-flex items-center justify-center gap-2 rounded-xl bg-blue-500 px-3 py-2 text-sm font-medium text-white transition hover:bg-blue-400 disabled:opacity-60"
+                    >
+                      <Send className="h-4 w-4" />
+                      {isRunning ? "Running..." : "Run Command"}
+                    </button>
+                  </div>
+
+                  <div className="mt-4 grid gap-3 sm:grid-cols-3">
+                    <label className="rounded-xl border border-cyan-200/20 bg-black/40 p-2 text-xs text-cyan-100/90">
+                      <span className="mb-1 block uppercase tracking-[0.12em] text-cyan-200/70">Reply Language</span>
+                      <select
+                        value={voiceLanguageMode}
+                        onChange={(event) => setVoiceLanguageMode(event.target.value as VoiceLanguageMode)}
+                        className="w-full rounded-lg border border-cyan-200/20 bg-black/50 px-2 py-1 text-xs text-cyan-50"
+                      >
+                        <option value="auto">Auto</option>
+                        <option value="english">English</option>
+                        <option value="hindi">Hindi</option>
+                      </select>
+                    </label>
+
+                    <label className="rounded-xl border border-cyan-200/20 bg-black/40 p-2 text-xs text-cyan-100/90">
+                      <span className="mb-1 block uppercase tracking-[0.12em] text-cyan-200/70">Voice</span>
+                      <select
+                        value={voiceGender}
+                        onChange={(event) => setVoiceGender(event.target.value as VoiceGender)}
+                        className="w-full rounded-lg border border-cyan-200/20 bg-black/50 px-2 py-1 text-xs text-cyan-50"
+                      >
+                        <option value="female">Female</option>
+                        <option value="male">Male</option>
+                      </select>
+                    </label>
+
+                    <label className="rounded-xl border border-cyan-200/20 bg-black/40 p-2 text-xs text-cyan-100/90">
+                      <span className="mb-1 block uppercase tracking-[0.12em] text-cyan-200/70">Speech Mode</span>
+                      <select
+                        value={playbackMode}
+                        onChange={(event) => setPlaybackMode(event.target.value as VoicePlaybackMode)}
+                        className="w-full rounded-lg border border-cyan-200/20 bg-black/50 px-2 py-1 text-xs text-cyan-50"
+                      >
+                        <option value="low-latency">Instant</option>
+                        <option value="studio">Studio (Groq)</option>
+                      </select>
+                    </label>
+                  </div>
+
+                  <div className="mt-4 rounded-2xl border border-cyan-200/15 bg-black/40 p-3">
+                    <p className="text-[11px] uppercase tracking-[0.14em] text-cyan-200/70">Live Voice Transcript</p>
+                    <p className="mt-2 min-h-14 text-sm leading-relaxed text-cyan-50/95">
+                      {commandDraft || "Speak your command and watch live transcript here..."}
+                    </p>
+                  </div>
+
+                  <div className="mt-4 rounded-2xl border border-cyan-200/15 bg-black/40 p-3">
+                    <p className="text-[11px] uppercase tracking-[0.14em] text-cyan-200/70">Omni Response</p>
+                    <p className="mt-2 min-h-20 text-sm leading-relaxed text-cyan-50/95">
+                      {assistantResponse || "Response will stream here with voice playback."}
+                    </p>
+                  </div>
+                </div>
+
+                <aside className="rounded-3xl border border-cyan-200/20 bg-black/35 p-4 backdrop-blur-xl sm:p-6">
+                  <div className="mb-3 flex items-center gap-2 text-cyan-100">
                     <AudioLines className="h-4 w-4" />
-                    <p className="text-sm font-semibold">Execution Feed</p>
+                    <p className="text-sm font-medium">Execution Feed</p>
                   </div>
 
-                  <div className="max-h-[38vh] space-y-2 overflow-y-auto pr-1 sm:max-h-[44vh]">
+                  <div className="space-y-2">
                     {steps.length === 0 && (
-                      <p className="text-sm text-teal-200/70">No live steps yet. Start mic and speak your command.</p>
+                      <p className="text-sm text-cyan-200/65">No steps yet. Execute a voice command to see live orchestration.</p>
                     )}
 
                     {steps.map((step) => (
-                      <div key={step.id} className="rounded-xl border border-teal-200/15 bg-slate-950/60 p-2.5">
-                        <div className="flex items-center justify-between gap-2">
-                          <p className="text-[11px] uppercase tracking-[0.14em] text-teal-300/85">{step.agent}</p>
-                          <span className="rounded-full border border-amber-200/20 bg-amber-200/10 px-2 py-0.5 text-[10px] uppercase tracking-[0.11em] text-amber-100/90">
-                            {step.status}
-                          </span>
-                        </div>
-                        <p className="mt-1 text-sm text-teal-50/95">{step.message}</p>
+                      <div
+                        key={step.id}
+                        className="rounded-xl border border-cyan-200/15 bg-black/35 p-2"
+                      >
+                        <p className="text-[11px] uppercase tracking-[0.14em] text-cyan-300/80">{step.agent}</p>
+                        <p className="text-sm text-cyan-50/95">{step.message}</p>
+                        <p className="mt-1 text-[11px] text-cyan-200/70">{step.status}</p>
                       </div>
                     ))}
                   </div>
 
-                  <div className="mt-4 rounded-xl border border-teal-200/15 bg-slate-950/60 p-3">
-                    <p className="inline-flex items-center gap-1 text-[11px] uppercase tracking-[0.14em] text-teal-100/75">
-                      <WandSparkles className="h-3.5 w-3.5" />
-                      Session Context
-                    </p>
-                    <p className="mt-1 text-xs text-teal-50/90">Model: {selectedModel}</p>
-                    <p className="text-xs text-teal-50/90">Reply language: {voiceLanguageMode}</p>
-                    <p className="text-xs text-teal-50/90">Voice: {voiceGender}</p>
-                    <p className="text-xs text-teal-50/90">Speech mode: {playbackMode}</p>
-                    <p className="text-xs text-teal-50/90">Last command: {lastCommand || "-"}</p>
+                  <div className="mt-4 rounded-xl border border-cyan-200/15 bg-black/35 p-3">
+                    <p className="text-[11px] uppercase tracking-[0.14em] text-cyan-200/70">Context</p>
+                    <p className="mt-1 text-xs text-cyan-50/85">Model: {selectedModel}</p>
+                    <p className="text-xs text-cyan-50/85">Reply language: {voiceLanguageMode}</p>
+                    <p className="text-xs text-cyan-50/85">Voice: {voiceGender}</p>
+                    <p className="text-xs text-cyan-50/85">Speech mode: {playbackMode}</p>
+                    <p className="text-xs text-cyan-50/85">Last command: {lastCommand || "-"}</p>
                     {error && <p className="mt-2 text-xs text-rose-300">{error}</p>}
                   </div>
                 </aside>
