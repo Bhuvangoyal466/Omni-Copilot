@@ -1,198 +1,181 @@
 # Omni Copilot
 
-[![Next.js](https://img.shields.io/badge/Next.js-14-black?style=for-the-badge&logo=next.js)](https://nextjs.org/)
-[![FastAPI](https://img.shields.io/badge/FastAPI-0.116-009688?style=for-the-badge&logo=fastapi)](https://fastapi.tiangolo.com/)
-[![LangGraph](https://img.shields.io/badge/LangGraph-Orchestrator-4B5563?style=for-the-badge)](https://www.langchain.com/langgraph)
-[![Prisma](https://img.shields.io/badge/Prisma-7.x-2D3748?style=for-the-badge&logo=prisma)](https://www.prisma.io/)
-[![Tailwind CSS](https://img.shields.io/badge/TailwindCSS-3.x-06B6D4?style=for-the-badge&logo=tailwindcss)](https://tailwindcss.com/)
+Omni Copilot is a full-stack assistant workspace for running multi-step conversations, executing connected tool actions, and preserving useful memory across follow-up prompts.
 
-Omni Copilot is a chat-first universal AI workspace that orchestrates your daily tools from one interface.
+It is designed for practical assistant workflows, not just chat. A user can ask a question, connect external tools, execute an action, inspect timeline/plans, and continue from shared context in the same session.
 
-## What You Get
+## Table of Contents
 
-- Real-time chat with streaming responses
-- Agent activity timeline with step updates
-- Tool integrations hub (Gmail, Calendar, Sheets, GitHub, Notion, Slack, Drive stubs)
-- Command palette workflow (`Cmd+K`)
-- Memory viewer/editor
-- Action history with undo patterns
-- Separate dark and light landing pages for visual QA
+- [What This Project Does](#what-this-project-does)
+- [Core Features](#core-features)
+- [How It Works](#how-it-works)
+- [Project Structure](#project-structure)
+- [Tech Stack (Brief)](#tech-stack-brief)
+- [Prerequisites](#prerequisites)
+- [Setup](#setup)
+- [Run Locally](#run-locally)
+- [Environment Variables](#environment-variables)
+- [Routes](#routes)
+- [API Endpoints](#api-endpoints)
+- [Common Commands](#common-commands)
+- [Development Notes](#development-notes)
 
-## Theme Routes
+## What This Project Does
 
-- `/dark` forces dark mode landing experience
-- `/light` forces light mode landing experience
-- `/` uses your saved theme preference
+Omni Copilot combines:
 
-## Monorepo Structure
+- A modern chat interface for long-running and context-aware conversations.
+- A backend orchestration engine that routes requests to specialized agents.
+- Tool integrations (Google, GitHub, Slack, Discord, Notion, and others) for real actions.
+- Memory management so follow-up prompts can build on prior context.
+
+Typical use cases:
+
+- Ask the assistant to summarize and follow up on work across tools.
+- Launch tool actions from one workspace instead of switching apps.
+- Store and edit memory/context that improves future responses.
+- Inspect agent signals and timeline behavior during complex tasks.
+
+## Core Features
+
+- Streaming chat responses with conversation flow designed for iterative work.
+- Agent-driven orchestration across dialogue, memory, tools, knowledge, calendar, browser, and code.
+- Integrations dashboard to connect/disconnect providers and inspect status.
+- Memory editor to persist and refine context used in future prompts.
+- Command board and workspace shell for fast navigation.
+- Dedicated light and dark visual preview pages for UI verification.
+
+## How It Works
+
+1. The frontend sends user prompts to backend chat APIs.
+2. The backend router selects the best-fit agent path.
+3. Agents call tool adapters when external actions/data are needed.
+4. Memory state is read/written during the interaction lifecycle.
+5. The frontend streams assistant output and updates local UI state.
+
+## Project Structure
 
 ```text
-frontend/  -> Next.js App Router (UI, auth, Prisma schema, API proxy)
-backend/   -> FastAPI + LangGraph orchestration and tool/api stubs
+studio/  -> Next.js application (UI, auth, pages, local API routes)
+engine/  -> FastAPI backend (agents, orchestration, tools, persistence)
 ```
 
-## Tech Stack
+Key areas:
 
-### Frontend
+- `studio/app/` for routes, layouts, and API route handlers.
+- `studio/components/` for chat, tools, voice, and shared UI blocks.
+- `engine/agents/` for orchestration logic and agent specialization.
+- `engine/tools/` for integration adapters (Google, Slack, GitHub, etc.).
+- `engine/api/` for chat, integrations, memory, and voice endpoints.
+- `engine/data/` for local development database state.
 
-- Next.js 14 + TypeScript
-- Tailwind CSS + Framer Motion
-- shadcn/ui primitives + 21st-inspired components
-- Zustand + React Query
-- NextAuth v5
-- Prisma
+## Tech Stack (Brief)
 
-### Backend
+- Frontend: Next.js 14, TypeScript, Tailwind CSS.
+- Backend: FastAPI, Python, agent-based orchestration.
+- Data/State: SQLite for local development (with optional external services for expanded setups).
 
-- FastAPI
-- LangGraph (multi-agent orchestration)
-- Pydantic v2
-- SQLAlchemy + Psycopg
-- Qdrant client + FastEmbed (`sentence-transformers/all-MiniLM-L6-v2`)
-- Upstash/Redis ready config
+## Prerequisites
 
-## Quick Start
+Install the following before setup:
 
-### 1) Frontend
+- Node.js 18+ and npm.
+- Python 3.10+.
+- Git.
 
-```bash
-cd frontend
+Optional for extended scenarios:
+
+- Provider credentials for integrations (Google, GitHub, Slack, etc.).
+- External DB/vector services if you are not running local-only defaults.
+
+## Setup
+
+Clone and enter the workspace:
+
+```powershell
+git clone <your-repo-url>
+cd Omni-Copilot
+```
+
+Install frontend dependencies:
+
+```powershell
+cd studio
 npm install
-npm run dev
+cd ..
 ```
 
-### 2) Backend
+Install backend dependencies in a virtual environment:
 
-```bash
-cd backend
+```powershell
+cd engine
 python -m venv .venv
 .venv\Scripts\activate
 pip install -r requirements.txt
+cd ..
+```
+
+## Run Locally
+
+Start backend (Terminal 1):
+
+```powershell
+cd engine
+.venv\Scripts\activate
 uvicorn main:app --reload --port 8000
 ```
 
-## Environment Setup
+Start frontend (Terminal 2):
 
-Configured files:
+```powershell
+cd studio
+npm run dev
+```
 
-- `frontend/.env`
-- `frontend/.env.example`
-- `backend/.env`
-- `backend/.env.example`
+Open:
 
-`*.env.example` files intentionally use placeholders only. Add your real keys and database URL in local `.env` files.
+- Frontend: `http://localhost:3000`
+- Backend health: `http://localhost:8000/health`
 
-## Production Integrations Setup (Google, Slack, Discord, Notion, GitHub)
+## Environment Variables
 
-This project now uses real OAuth connection flows (not instant demo toggles).
+Create two files:
 
-### 1) Frontend env (`frontend/.env`)
+- `studio/.env`
+- `engine/.env`
 
-Set:
+Commonly used values:
 
-- `NEXTAUTH_SECRET`
+### Frontend (`studio/.env`)
+
+- `NEXTAUTH_SECRET=<random-secret>`
 - `NEXTAUTH_URL=http://localhost:3000`
-- `GOOGLE_CLIENT_ID`
-- `GOOGLE_CLIENT_SECRET`
+- `GOOGLE_CLIENT_ID=<google-client-id>`
+- `GOOGLE_CLIENT_SECRET=<google-client-secret>`
 - `BACKEND_API_URL=http://localhost:8000`
 
-### 2) Backend env (`backend/.env`)
-
-Set:
+### Backend (`engine/.env`)
 
 - `FRONTEND_APP_URL=http://localhost:3000`
 - `OAUTH_REDIRECT_BASE_URL=http://localhost:3000`
-- `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`
-- `SLACK_CLIENT_ID`, `SLACK_CLIENT_SECRET`
-- `DISCORD_CLIENT_ID`, `DISCORD_CLIENT_SECRET`
-- `NOTION_CLIENT_ID`, `NOTION_CLIENT_SECRET`
-- `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET`
-- `DEFAULT_MODEL=llama-3.3-70b-versatile`
-- `JWT_SECRET`
-- optional mem0:
-	- `MEM0_ENABLED=true`
-	- `MEM0_API_KEY=...`
+- `JWT_SECRET=<jwt-secret>`
+- `GROQ_API_KEY=<key>` or `OPENAI_API_KEY=<key>`
 
-### 3) OAuth redirect URLs to register in provider consoles
+Additional variables may be required depending on which integrations and provider features you enable.
 
-Register frontend callback URLs (frontend route forwards to backend callback automatically):
+## Routes
 
-- Google:
-	- `http://localhost:3000/api/integrations/gmail/callback`
-	- `http://localhost:3000/api/integrations/gcal/callback`
-	- `http://localhost:3000/api/integrations/gmeet/callback`
-	- `http://localhost:3000/api/integrations/gforms/callback`
-	- `http://localhost:3000/api/integrations/gsheets/callback`
-	- `http://localhost:3000/api/integrations/drive/callback`
-- Slack:
-	- `http://localhost:3000/api/integrations/slack/callback`
-- Discord:
-	- `http://localhost:3000/api/integrations/discord/callback`
-- Notion:
-	- `http://localhost:3000/api/integrations/notion/callback`
-- GitHub:
-	- `http://localhost:3000/api/integrations/github/callback`
+- `/` landing page
+- `/dark` dark preview route
+- `/light` light preview route
+- `/login` authentication flow
+- `/chat/new` new conversation entry point
+- `/integrations` tool connection management
+- `/memory` persisted context editor
 
-### 4) Google scopes to enable in OAuth consent screen
+## API Endpoints
 
-- `openid`
-- `email`
-- `profile`
-- `https://www.googleapis.com/auth/gmail.readonly`
-- `https://www.googleapis.com/auth/gmail.send`
-- `https://www.googleapis.com/auth/calendar`
-- `https://www.googleapis.com/auth/spreadsheets`
-- `https://www.googleapis.com/auth/drive.file`
-- `https://www.googleapis.com/auth/drive.readonly`
-- `https://www.googleapis.com/auth/forms.responses.readonly`
-- `https://www.googleapis.com/auth/forms.body`
-- `https://www.googleapis.com/auth/meetings.space.created`
-
-### 4.1) WhatsApp live automation prerequisites
-
-- Install Playwright in backend environment:
-	- `pip install playwright`
-	- `playwright install chromium`
-- First run may require scanning WhatsApp Web QR code.
-- Optional: set `OMNI_WHATSAPP_CONFIRMATION_MS=6000` to keep automation window visible after message send.
-
-### 4.2) Voice Arena TTS (Groq)
-
-- Set backend env values:
-	- `GROQ_TTS_MODEL` (default: `playai-tts`)
-	- `GROQ_TTS_VOICE_EN` (default: `alloy`)
-	- `GROQ_TTS_VOICE_HI` (default: `alloy`)
-
-### 5) Start services
-
-1. Start backend: `uvicorn main:app --reload --port 8000`
-2. Start frontend: `npm run dev` in `frontend/`
-3. Login via `Continue with Google`
-4. Go to Integrations and click Connect for each tool
-
-### 6) Chat memory and history
-
-- Chat now writes memory context per user on backend (`qdrant` + optional `mem0`).
-- Frontend chat history is persisted in local storage and shown in sidebar as recent chats.
-
-### 7) Plan UX
-
-- Plan messages render as a styled card.
-- Accept and Decline buttons are shown under plans in chat UI.
-
-## Prisma Database and Studio
-
-From `frontend/` run:
-
-```bash
-npx prisma generate --config prisma.config.ts
-npx prisma db push --config prisma.config.ts
-npx prisma studio --config prisma.config.ts
-```
-
-This will generate the client, sync tables from `prisma/schema.prisma`, and open Prisma Studio with expected models.
-
-## Core API Endpoints
+Core endpoints:
 
 - `GET /health`
 - `POST /api/chat/stream`
@@ -202,37 +185,21 @@ This will generate the client, sync tables from `prisma/schema.prisma`, and open
 - `GET /api/memory`
 - `POST /api/memory`
 
-## Current Agent Nodes
+## Common Commands
 
-- OrchestratorAgent
-- DocsAgent
-- CommsAgent
-- CalendarAgent
-- CodeAgent
-- BrowserAgent
-- MemoryAgent
+From `studio/`:
 
-## Scripts
+- `npm run dev` - start local frontend
+- `npm run build` - production build
+- `npm run typecheck` - TypeScript validation
 
-From `frontend/`:
+From `engine/`:
 
-- `npm run dev`
-- `npm run build`
-- `npm run typecheck`
-- `npm run prisma:generate`
-- `npm run prisma:migrate`
+- `uvicorn main:app --reload --port 8000` - start backend in reload mode
 
-From `backend/`:
+## Development Notes
 
-- `uvicorn main:app --reload --port 8000`
-
-## Validation Checklist
-
-- Frontend typecheck and build pass
-- Backend syntax/import checks pass
-- Prisma client generation works
-- Prisma table sync works
-
-## Notes
-
-This repository currently contains a strong production-style scaffold with live UI flows and agent orchestration stubs. Provider-specific OAuth and deep API actions can be layered on top of this base without restructuring the architecture.
+- Local development uses SQLite-backed state by default.
+- Frontend keeps recent interaction state in local storage for smooth UX.
+- Some advanced memory/integration deployments can be configured with external services.
+- If chat responses fail, verify at least one LLM provider key is present in `engine/.env`.

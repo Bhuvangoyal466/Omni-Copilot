@@ -1,29 +1,39 @@
 # Node / frontend
-frontend/node_modules/
-frontend/.next/
-frontend/out/
-frontend/.vercel/
-frontend/.env
-frontend/.env.local
-frontend/.env*.local
-frontend/.env.*
-!frontend/.env.example
+studio/node_modules/
+studio/.next/
+studio/out/
+studio/.vercel/
+studio/.env
+studio/.env.local
+studio/.env*.local
+studio/.env.*
+!studio/.env.example
+studio/tsconfig.tsbuildinfo
+
+# Root env files
+.env
+.env.local
+.env*.local
+.env.*
+!.env.example
 
 # Python / backend
-backend/.venv/
-backend/__pycache__/
-backend/.pytest_cache/
-backend/.mypy_cache/
-backend/.ruff_cache/
-backend/.env
-backend/.env.*
-!backend/.env.example
-backend/*.pyc
-backend/**/*.pyc
-backend/**/*.pyo
-backend/**/__pycache__/
+engine/.venv/
+engine/__pycache__/
+engine/.pytest_cache/
+engine/.mypy_cache/
+engine/.ruff_cache/
+engine/.env
+engine/.env.*
+!engine/.env.example
+engine/*.pyc
+engine/**/*.pyc
+engine/**/*.pyo
+engine/**/__pycache__/
+engine/data/*.sqlite3
 __pycache__/
 *.py[cod]
+*.sqlite3
 
 # OS/editor
 .DS_Store

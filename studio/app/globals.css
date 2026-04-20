@@ -1,0 +1,70 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+    --font-sans: Arial, Helvetica, sans-serif;
+    --font-display: Arial, Helvetica, sans-serif;
+    --background: 0 0% 98%;
+    --foreground: 220 15% 14%;
+    --card: 0 0% 100%;
+    --card-foreground: 220 15% 14%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 220 15% 14%;
+    --primary: 220 12% 20%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 220 10% 94%;
+    --secondary-foreground: 220 15% 14%;
+    --muted: 220 8% 92%;
+    --muted-foreground: 220 8% 42%;
+    --accent: 220 8% 92%;
+    --accent-foreground: 220 15% 14%;
+    --destructive: 0 72% 52%;
+    --destructive-foreground: 0 0% 100%;
+    --border: 220 10% 84%;
+    --input: 220 10% 88%;
+    --ring: 220 12% 20%;
+    --radius: 0.65rem;
+}
+
+.dark {
+    --background: 220 15% 9%;
+    --foreground: 0 0% 96%;
+    --card: 220 14% 13%;
+    --card-foreground: 0 0% 96%;
+    --popover: 220 14% 13%;
+    --popover-foreground: 0 0% 96%;
+    --primary: 0 0% 96%;
+    --primary-foreground: 220 15% 9%;
+    --secondary: 220 10% 17%;
+    --secondary-foreground: 0 0% 96%;
+    --muted: 220 10% 17%;
+    --muted-foreground: 220 8% 68%;
+    --accent: 220 10% 17%;
+    --accent-foreground: 0 0% 96%;
+    --destructive: 0 72% 52%;
+    --destructive-foreground: 0 0% 100%;
+    --border: 220 10% 22%;
+    --input: 220 10% 22%;
+    --ring: 0 0% 96%;
+}
+
+* {
+    @apply border-border;
+}
+
+body {
+    @apply bg-background text-foreground antialiased;
+    font-family: var(--font-sans), sans-serif;
+    background-image: none;
+    min-height: 100vh;
+}
+
+h1,
+h2,
+h3,
+h4,
+h5,
+h6 {
+    font-family: var(--font-display), var(--font-sans), sans-serif;
+}
